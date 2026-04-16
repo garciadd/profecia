@@ -1,0 +1,13 @@
+numpy
+pandas
+xarray
+netcdf4
+h5netcdf
+dask
+matplotlib
+scipy
+statsmodels
+scikit-learn
+jupyter
+notebook
+ipykernel

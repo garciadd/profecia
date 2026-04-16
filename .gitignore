@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+*.pyo
+
+*.egg-info/
+*.egg
+*.dist-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+
+data/
+docs/
+
+.DS_Store
