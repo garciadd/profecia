@@ -1,12 +1,17 @@
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import joblib
+import os
 import numpy as np
 from sklearn.preprocessing import RobustScaler, StandardScaler
 
 from src.models.tabular_models import build_model, get_model_name
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 # SCALING
@@ -86,6 +91,8 @@ def train_tabular_model(
     model_name: str = "rf",
     scaler_name: str | None = None,
     random_state: int = 42,
+    mlflow_config: dict | None = None,
+    log_shap: bool = True,
     **model_kwargs,
 ) -> dict[str, Any]:
     """
@@ -109,6 +116,10 @@ def train_tabular_model(
 
     scaler = build_scaler(scaler_name)
 
+    # Keep operational/config kwargs from leaking into sklearn estimators.
+    for reserved_key in ("mlflow_config", "log_shap"):
+        model_kwargs.pop(reserved_key, None)
+
     if scaler is not None:
         X_train_used = scaler.fit_transform(X_train)
         X_train_used = X_train_used.astype(np.float32, copy=False)
@@ -122,6 +133,227 @@ def train_tabular_model(
     )
 
     model.fit(X_train_used, y_train)
+
+    # --- MLflow logging (optional) ---------------------------------
+    mlflow_run_id = None
+    mlflow_experiment = None
+    if mlflow_config is not None:
+        LOGGER.info(
+            "MLflow logging enabled for model=%s experiment=%s tracking_uri=%s log_shap=%s",
+            model_name,
+            mlflow_config.get("experiment_name", "default"),
+            mlflow_config.get("tracking_uri"),
+            log_shap,
+        )
+        try:
+            import mlflow
+            import mlflow.sklearn
+            # auth via env vars if provided
+            tracking_uri = mlflow_config.get("tracking_uri")
+            username = mlflow_config.get("user")
+            password = mlflow_config.get("password")
+            experiment_name = mlflow_config.get("experiment_name", "default")
+            run_name = mlflow_config.get("run_name")
+
+            if username:
+                os.environ.setdefault("MLFLOW_TRACKING_USERNAME", str(username))
+            if password:
+                os.environ.setdefault("MLFLOW_TRACKING_PASSWORD", str(password))
+            if tracking_uri:
+                mlflow.set_tracking_uri(tracking_uri)
+
+            mlflow.set_experiment(experiment_name)
+            mlflow_experiment = experiment_name
+            LOGGER.info(
+                "MLflow configured with experiment=%s run_name=%s",
+                experiment_name,
+                run_name,
+            )
+
+            with mlflow.start_run(run_name=run_name) as run:
+                mlflow_run_id = run.info.run_id
+                LOGGER.info("Started MLflow run: %s", mlflow_run_id)
+                # log params
+                mlflow.log_param("model_name_requested", model_name)
+                mlflow.log_param("scaler_name", scaler_name if scaler_name is not None else "none")
+                mlflow.log_param("random_state", int(random_state))
+                mlflow.log_param("n_rows_train", int(X_train.shape[0]))
+                mlflow.log_param("n_features", int(X_train.shape[1]))
+                
+                LOGGER.info(
+                    "Logging MLflow params for model=%s rows=%s features=%s",
+                    model_name,
+                    int(X_train.shape[0]),
+                    int(X_train.shape[1]),
+                )
+                # model params
+                try:
+                    for k, v in model.get_params().items():
+                        mlflow.log_param(f"model_param_{k}", str(v))
+                    LOGGER.info("Logged %s model hyperparameters to MLflow", len(model.get_params()))
+                except Exception:
+                    LOGGER.exception("Failed to log model hyperparameters to MLflow")
+
+                # predictions on train for metrics
+                try:
+                    y_pred = model.predict(X_train_used)
+                    LOGGER.info("Computed train predictions for MLflow metrics")
+                except Exception:
+                    y_pred = None
+                    LOGGER.exception("Failed to compute train predictions for MLflow metrics")
+
+                # determine task type
+                is_classification = False
+                try:
+                    uniq = np.unique(y_train)
+                    if np.issubdtype(y_train.dtype, np.integer) and uniq.size <= 20:
+                        is_classification = True
+                    LOGGER.info(
+                        "Detected task type for MLflow metrics: %s",
+                        "classification" if is_classification else "regression",
+                    )
+                except Exception:
+                    is_classification = False
+                    LOGGER.exception("Failed to infer task type; defaulting to regression metrics")
+
+                # compute metrics
+                if y_pred is not None:
+                    try:
+                        if is_classification:
+                            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+                            acc = float(accuracy_score(y_train, y_pred))
+                            prec = float(precision_score(y_train, y_pred, average="weighted", zero_division=0))
+                            rec = float(recall_score(y_train, y_pred, average="weighted", zero_division=0))
+                            f1 = float(f1_score(y_train, y_pred, average="weighted", zero_division=0))
+                            mlflow.log_metric("train_accuracy", acc)
+                            mlflow.log_metric("train_precision_weighted", prec)
+                            mlflow.log_metric("train_recall_weighted", rec)
+                            mlflow.log_metric("train_f1_weighted", f1)
+                            LOGGER.info(
+                                "Logged classification metrics to MLflow: accuracy=%.6f f1=%.6f",
+                                acc,
+                                f1,
+                            )
+                        else:
+                            from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+                            mse = float(mean_squared_error(y_train, y_pred))
+                            rmse = float(np.sqrt(mse))
+                            mae = float(mean_absolute_error(y_train, y_pred))
+                            r2 = float(r2_score(y_train, y_pred))
+                            mlflow.log_metric("train_mse", mse)
+                            mlflow.log_metric("train_rmse", rmse)
+                            mlflow.log_metric("train_mae", mae)
+                            mlflow.log_metric("train_r2", r2)
+                            LOGGER.info(
+                                "Logged regression metrics to MLflow: rmse=%.6f mae=%.6f r2=%.6f",
+                                rmse,
+                                mae,
+                                r2,
+                            )
+                    except Exception:
+                        LOGGER.exception("Failed to compute or log train metrics to MLflow")
+                else:
+                    LOGGER.warning("Skipping MLflow metric logging because train predictions are unavailable")
+
+                # log model and scaler as artifacts
+                try:
+                    mlflow.sklearn.log_model(model, name="model")
+                    LOGGER.info("Logged sklearn model artifact to MLflow")
+                except Exception:
+                    LOGGER.warning("mlflow.sklearn.log_model failed for model; trying joblib artifact fallback")
+                    try:
+                        # fallback: save joblib and log as artifact
+                        tmp_model = Path("/tmp") / f"model_{mlflow_run_id}.joblib"
+                        joblib.dump(model, tmp_model)
+                        mlflow.log_artifact(str(tmp_model))
+                        LOGGER.info("Logged model artifact via joblib fallback: %s", tmp_model)
+                    except Exception:
+                        LOGGER.exception("Failed to log model artifact to MLflow, including fallback")
+
+                if scaler is not None:
+                    try:
+                        mlflow.sklearn.log_model(scaler, name="scaler")
+                        LOGGER.info("Logged scaler artifact to MLflow")
+                    except Exception:
+                        LOGGER.warning("mlflow.sklearn.log_model failed for scaler; trying joblib artifact fallback")
+                        try:
+                            tmp_scaler = Path("/tmp") / f"scaler_{mlflow_run_id}.joblib"
+                            joblib.dump(scaler, tmp_scaler)
+                            mlflow.log_artifact(str(tmp_scaler))
+                            LOGGER.info("Logged scaler artifact via joblib fallback: %s", tmp_scaler)
+                        except Exception:
+                            LOGGER.exception("Failed to log scaler artifact to MLflow, including fallback")
+                else:
+                    LOGGER.info("No scaler configured; skipping scaler artifact logging")
+
+                # SHAP explanations (optional)
+                if log_shap:
+                    LOGGER.info("SHAP logging enabled; attempting explainer generation")
+                    try:
+                        import shap
+                        import matplotlib.pyplot as plt
+                        # use fast explainer when possible
+                        try:
+                            expl = shap.Explainer(model, X_train_used)
+                            shap_values = expl(X_train_used)
+                            LOGGER.info("Computed SHAP values with shap.Explainer")
+                        except Exception:
+                            LOGGER.warning("shap.Explainer failed; trying TreeExplainer fallback")
+                            # fallback to TreeExplainer or KernelExplainer
+                            try:
+                                expl = shap.TreeExplainer(model)
+                                shap_values = expl.shap_values(X_train_used)
+                                LOGGER.info("Computed SHAP values with shap.TreeExplainer")
+                            except Exception:
+                                shap_values = None
+                                LOGGER.exception("Failed to compute SHAP values with available explainers")
+
+                        if shap_values is not None:
+                            # compute mean absolute importance per feature
+                            try:
+                                import numpy as _np
+                                if hasattr(shap_values, "values"):
+                                    vals = shap_values.values
+                                else:
+                                    vals = shap_values
+                                # handle multilevel output
+                                if isinstance(vals, list):
+                                    vals_arr = _np.mean(_np.abs(_np.vstack([_np.asarray(v) for v in vals])), axis=0)
+                                else:
+                                    vals_arr = _np.mean(_np.abs(vals), axis=0)
+
+                                feat_names = [f"f{i}" for i in range(vals_arr.shape[-1])]
+                                # bar plot
+                                fig, ax = plt.subplots(figsize=(8, 4))
+                                ax.bar(range(len(vals_arr)), vals_arr)
+                                ax.set_xticks(range(len(vals_arr)))
+                                ax.set_xticklabels(feat_names, rotation=90)
+                                ax.set_ylabel("mean |SHAP value|")
+                                ax.set_title("Feature importance (SHAP)")
+                                shap_path = Path("/tmp") / f"shap_importance_{mlflow_run_id}.png"
+                                fig.tight_layout()
+                                fig.savefig(shap_path, dpi=150, bbox_inches='tight')
+                                plt.close(fig)
+                                mlflow.log_artifact(str(shap_path))
+                                LOGGER.info("Logged SHAP importance plot to MLflow: %s", shap_path)
+                            except Exception:
+                                LOGGER.exception("Failed to create or log SHAP importance plot")
+                        else:
+                            LOGGER.warning("Skipping SHAP artifact logging because no SHAP values were computed")
+                    except Exception:
+                        LOGGER.exception("Failed during SHAP logging setup or execution")
+                else:
+                    LOGGER.info("SHAP logging disabled for this run")
+
+                LOGGER.info("Completed MLflow logging for run %s", mlflow_run_id)
+
+        except Exception:
+            # if MLflow not installed or any error, continue silently
+            mlflow_run_id = None
+            mlflow_experiment = None
+            LOGGER.exception("MLflow logging failed; continuing without MLflow artifacts")
+    else:
+        LOGGER.info("MLflow logging disabled because mlflow_config is None")
 
     train_info = {
         "model_name_requested": model_name,
@@ -140,6 +372,8 @@ def train_tabular_model(
         "scaler": scaler,
         "X_train_used": X_train_used,
         "train_info": train_info,
+        "mlflow_run_id": mlflow_run_id,
+        "mlflow_experiment": mlflow_experiment,
     }
 
 
