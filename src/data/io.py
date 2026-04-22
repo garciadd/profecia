@@ -19,6 +19,7 @@ FILE_MAP = {
     "T2M": "t2m_1982_2022_monthly_0.5deg.nc",
     "SSRD": "ssrd_1982_2022_monthly_0.5deg.nc",
     "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
+    "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
 MASK_MAP = {
@@ -47,6 +48,8 @@ ANNUAL_AGGREGATION_RULES = {
     "T2M": "mean",
     "SSRD": "sum",
     "VPD": "mean",
+    "LC_STATIC": "mean",
+
 }
 
 CLIMATE_VALID_CODES = {1, 2, 3, 4, 5}
@@ -103,6 +106,31 @@ def save_npy(output_dir: str | Path, name: str, data: xr.DataArray | np.ndarray)
     path = output_dir / f"{name}.npy"
     np.save(path, arr)
     return path
+
+
+def save_masks_png(output_dir: str | Path, masks: dict[str, xr.DataArray], dpi: int = 150) -> dict[str, str]:
+    """
+    Guarda cada máscara del diccionario `masks` como un PNG en
+    `output_dir / "masks"` usando matplotlib. Devuelve un diccionario
+    {mask_name: path_str} con las rutas guardadas.
+    """
+    from matplotlib import pyplot as plt
+
+    output_dir = Path(output_dir) / "masks"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    saved = {}
+    for name, da in masks.items():
+        fig, ax = plt.subplots(figsize=(10, 4))
+        try:
+            da.plot(ax=ax)
+            ax.set_title(name)
+            path = output_dir / f"{name}.png"
+            fig.savefig(path, bbox_inches="tight", dpi=dpi)
+            saved[name] = str(path)
+        finally:
+            plt.close(fig)
+
+    return saved
 
 
 def _standardize_dataset(ds: xr.Dataset) -> xr.Dataset:
@@ -180,7 +208,10 @@ def load_netcdf(
     ds = _standardize_dataset(ds)
     var_name = _get_single_data_var(ds)
 
-    da = ds[var_name].transpose("time", "latitude", "longitude")
+    if "class" in ds.dims:
+        da = ds[var_name].transpose("time", "class", "latitude", "longitude")
+    else:
+        da = ds[var_name].transpose("time", "latitude", "longitude")
     da = _select_time(da, start_year, end_year_inclusive)
     da = _select_roi(da, roi)
     da = da.astype(dtype)
@@ -234,6 +265,10 @@ def aggregate_time(
 
     if require_full_years:
         _validate_full_years(da)
+
+    for clave in ANNUAL_AGGREGATION_RULES:
+        if clave in variable_name:
+            variable_name = clave 
 
     rule = annual_rule or ANNUAL_AGGREGATION_RULES[variable_name]
     if rule not in {"mean", "sum"}:
@@ -336,6 +371,104 @@ def apply_filter_mask(da: xr.DataArray, filter_mask: xr.DataArray | None) -> xr.
     _validate_mask_alignment(da, filter_mask, "filter_mask")
     return da.where(filter_mask)
 
+def _process_and_save_single_dataarray(
+    da_raw,
+    output_dir: str | Path,
+    variable_name: str,
+    meta_load: dict,
+    mask_dir: str | Path | None = None,
+    masks: dict | None = None,
+    temporal_resolution: str = "monthly",
+    annual_rule: str | None = None,
+    require_full_years: bool = True,
+    save_output: bool = True,
+) -> dict:
+    """Procesa una única DataArray 3D y devuelve metadata de salida + processing info."""
+
+    da_agg = aggregate_time(
+        da=da_raw,
+        variable_name=variable_name,
+        temporal_resolution=temporal_resolution,
+        annual_rule=annual_rule,
+        require_full_years=require_full_years,
+    )
+
+    combined_mask, mask_info = build_combined_filter_mask(da_agg, masks if masks else None)
+    da_final = apply_filter_mask(da_agg, combined_mask)
+
+    output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
+
+    result = {
+        variable_name: {
+            "logical_name": variable_name,
+            "array_path": str(output_path) if output_path is not None else None,
+            "load_metadata": meta_load,
+            "processing": {
+                "temporal_resolution": temporal_resolution,
+                "annual_rule": annual_rule,
+                "require_full_years": require_full_years,
+                "mask_dir": str(mask_dir) if mask_dir is not None else None,
+                **mask_info,
+            },
+            "final_shape": tuple(int(x) for x in da_final.shape),
+            "final_time_min": str(pd.to_datetime(da_final["time"].values[0])) if da_final.sizes["time"] else None,
+            "final_time_max": str(pd.to_datetime(da_final["time"].values[-1])) if da_final.sizes["time"] else None,
+            "final_units": da_final.attrs.get("units", ""),
+            "final_dtype": str(da_final.dtype),
+        }
+    }
+
+    del da_agg, da_final, combined_mask
+    gc.collect()
+
+    return result
+
+def _process_and_save_multiclass_dataarray(
+    da_raw,
+    output_dir: str | Path,
+    variable: str,
+    meta_load: dict,
+    mask_dir: str | Path | None = None,
+    masks: dict | None = None,
+    temporal_resolution: str = "monthly",
+    annual_rule: str | None = None,
+    require_full_years: bool = True,
+    save_output: bool = True,
+) -> dict:
+    """Procesa una DataArray con dimensión 'class' y guarda una salida por clase."""
+
+    outputs = {}  # ← aquí guardaremos el resultado de cada clase por separado
+    last_mask_info = {}  # ← guardamos mask_info de la última iteración para devolverlo
+
+    classes = da_raw["class"].values  # ← extraemos los valores reales de las clases
+
+    for i, c in enumerate(classes):
+        da_class = da_raw.isel({"class": i})  
+        # ← seleccionamos una sola clase y eliminamos la dimensión 'class'
+
+        class_variable_name = f"{variable.upper()}_CLASS_{c}"
+        # ← construimos un nombre único para el npy de esta clase
+
+        class_result = _process_and_save_single_dataarray(
+            da_raw=da_class,
+            output_dir=output_dir,
+            variable_name=class_variable_name,
+            meta_load=meta_load,
+            mask_dir=mask_dir,
+            masks=masks,
+            temporal_resolution=temporal_resolution,
+            annual_rule=annual_rule,
+            require_full_years=require_full_years,
+            save_output=save_output,
+        )
+
+        outputs.update(class_result)
+
+        del da_class
+        gc.collect()
+
+    return outputs
+
 
 def load_and_save_variable(
     raw_dir: str | Path,
@@ -361,45 +494,47 @@ def load_and_save_variable(
         dtype=dtype,
     )
 
-    da_agg = aggregate_time(
-        da=da_raw,
-        variable_name=variable,
-        temporal_resolution=temporal_resolution,
-        annual_rule=annual_rule,
-        require_full_years=require_full_years,
-    )
-
     masks = {}
     if mask_names:
         if mask_dir is None:
             raise ValueError("Si usas mask_names, debes pasar mask_dir.")
         for name in mask_names:
-            masks[name] = load_mask(mask_dir, name, da_agg["latitude"].values, da_agg["longitude"].values)
+            masks[name] = load_mask(
+                mask_dir,
+                name,
+                da_raw["latitude"].values,
+                da_raw["longitude"].values,
+            )
+            # ← aquí usamos da_raw, porque todavía no sabemos si la variable tiene class o no
 
-    combined_mask, mask_info = build_combined_filter_mask(da_agg, masks if masks else None)
-    da_final = apply_filter_mask(da_agg, combined_mask)
+    if "class" in da_raw.dims:
+        result = _process_and_save_multiclass_dataarray(
+            da_raw=da_raw,
+            output_dir=output_dir,
+            variable=variable,
+            meta_load=meta_load,
+            mask_dir=mask_dir,
+            masks=masks if masks else None,
+            temporal_resolution=temporal_resolution,
+            annual_rule=annual_rule,
+            require_full_years=require_full_years,
+            save_output=save_output,
+        )
+    else:
+        result = _process_and_save_single_dataarray(
+            da_raw=da_raw,
+            output_dir=output_dir,
+            variable_name=variable.upper(),
+            meta_load=meta_load,
+            mask_dir=mask_dir,
+            masks=masks if masks else None,
+            temporal_resolution=temporal_resolution,
+            annual_rule=annual_rule,
+            require_full_years=require_full_years,
+            save_output=save_output,
+        )
 
-    output_path = save_npy(output_dir, variable.upper(), da_final) if save_output else None
-
-    result = {
-        "logical_name": variable.upper(),
-        "array_path": str(output_path) if output_path is not None else None,
-        "load_metadata": meta_load,
-        "processing": {
-            "temporal_resolution": temporal_resolution,
-            "annual_rule": annual_rule,
-            "require_full_years": require_full_years,
-            "mask_dir": str(mask_dir) if mask_dir is not None else None,
-            **mask_info,
-        },
-        "final_shape": tuple(int(x) for x in da_final.shape),
-        "final_time_min": str(pd.to_datetime(da_final["time"].values[0])) if da_final.sizes["time"] else None,
-        "final_time_max": str(pd.to_datetime(da_final["time"].values[-1])) if da_final.sizes["time"] else None,
-        "final_units": da_final.attrs.get("units", ""),
-        "final_dtype": str(da_final.dtype),
-    }
-
-    del da_raw, da_agg, da_final, combined_mask, masks
+    del da_raw, masks
     gc.collect()
     return result
 
