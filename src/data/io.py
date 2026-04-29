@@ -583,3 +583,68 @@ def save_processed_metadata(
         dtype=dtype,
     )
     return save_metadata_json(output_dir, metadata, filename)
+
+def build_processed_run_config(
+    variable_names: list[str],
+    temporal_resolution: str,
+    mask_names: list[str] | None = None,
+    start_year: int | None = None,
+    end_year_inclusive: int | None = None,
+    dtype: str = "float32",
+    roi: ROI | None = None,
+) -> dict:
+    return {
+        "variable_names": [str(v).upper() for v in variable_names],
+        "temporal_resolution": temporal_resolution.lower().strip(),
+        "mask_names": [str(m).lower().strip() for m in (mask_names or [])],
+        "start_year": start_year,
+        "end_year_inclusive": end_year_inclusive,
+        "dtype": str(dtype),
+        "roi": _to_jsonable(roi),
+    }
+
+
+def load_processed_run_config(
+    output_dir: str | Path,
+    filename: str = "run_config.json",
+) -> dict | None:
+    path = Path(output_dir) / filename
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def processed_run_status(
+    output_dir: str | Path,
+    variable_names: list[str],
+    expected_config: dict | None = None,
+    metadata_filename: str = "metadata.json",
+    run_config_filename: str = "run_config.json",
+) -> dict[str, Any]:
+    output_dir = Path(output_dir)
+    expected_files = [output_dir / f"{str(v).upper()}.npy" for v in variable_names]
+    metadata_path = output_dir / metadata_filename
+    run_config_path = output_dir / run_config_filename
+
+    files_present = all(path.exists() for path in expected_files)
+    metadata_present = metadata_path.exists()
+    run_config_present = run_config_path.exists()
+    complete = output_dir.exists() and files_present and metadata_present and run_config_present
+
+    saved_config = load_processed_run_config(output_dir, filename=run_config_filename)
+    config_matches = expected_config is None or (saved_config == _to_jsonable(expected_config))
+
+    return {
+        "output_dir": str(output_dir),
+        "exists": output_dir.exists(),
+        "complete": bool(complete),
+        "files_present": bool(files_present),
+        "metadata_present": bool(metadata_present),
+        "run_config_present": bool(run_config_present),
+        "config_matches": bool(config_matches),
+        "saved_config": saved_config,
+        "missing_files": [str(path) for path in expected_files if not path.exists()],
+        "metadata_path": str(metadata_path),
+        "run_config_path": str(run_config_path),
+    }

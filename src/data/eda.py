@@ -1,11 +1,10 @@
+
 import json
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-import rasterio
-
 
 # Configuración interna para controlar RAM
 
@@ -19,18 +18,14 @@ DEFAULT_SCATTER_MAX_ATTEMPTS = 10
 # Helpers internos
 
 def _to_float32_view(arr: np.ndarray) -> np.ndarray:
-    """
-    Devuelve vista float32 si ya lo es; si no, convierte.
-    """
+    """Devuelve vista float32 si ya lo es; si no, convierte."""
     if arr.dtype == np.float32:
         return arr
     return arr.astype(np.float32, copy=False)
 
 
 def _corr_from_vectors(a: np.ndarray, b: np.ndarray) -> float:
-    """
-    Correlación de Pearson entre dos vectores 1D ya filtrados.
-    """
+    """Correlación de Pearson entre dos vectores 1D ya filtrados."""
     if a.size < 2 or b.size < 2:
         return np.nan
 
@@ -50,6 +45,28 @@ def _corr_from_vectors(a: np.ndarray, b: np.ndarray) -> float:
     return float((a_centered * b_centered).sum() / denom)
 
 
+def _skewness(values: np.ndarray) -> float:
+    if values.size < 3:
+        return np.nan
+    x = values.astype(np.float64, copy=False)
+    mu = x.mean()
+    sigma = x.std(ddof=0)
+    if sigma == 0:
+        return 0.0
+    return float(np.mean(((x - mu) / sigma) ** 3))
+
+
+def _kurtosis_excess(values: np.ndarray) -> float:
+    if values.size < 4:
+        return np.nan
+    x = values.astype(np.float64, copy=False)
+    mu = x.mean()
+    sigma = x.std(ddof=0)
+    if sigma == 0:
+        return 0.0
+    return float(np.mean(((x - mu) / sigma) ** 4) - 3.0)
+
+
 def _sample_valid_values_1d(
     arr: np.ndarray,
     max_points: int = DEFAULT_STATS_MAX_POINTS,
@@ -59,8 +76,6 @@ def _sample_valid_values_1d(
     """
     Muestra aleatoriamente valores válidos de un array sin construir
     el vector completo de índices válidos.
-
-    Útil para cuantiles e histogramas.
     """
     flat = arr.ravel()
     n_total = flat.size
@@ -231,9 +246,7 @@ def _category_pair_correlation(
 
 
 def _require_monthly_time(da: xr.DataArray, function_name: str) -> None:
-    """
-    Valida que un DataArray tenga resolución mensual.
-    """
+    """Valida que un DataArray tenga resolución mensual."""
     times = pd.to_datetime(da["time"].values)
     if len(times) < 2:
         raise ValueError(f"{function_name} requiere al menos 2 timestamps.")
@@ -245,6 +258,28 @@ def _require_monthly_time(da: xr.DataArray, function_name: str) -> None:
             f"{function_name} solo tiene sentido para series mensuales regulares. "
             "El DataArray recibido no parece mensual."
         )
+
+
+def infer_time_resolution_from_dataarray(da: xr.DataArray) -> str:
+    """
+    Infere si la serie temporal parece monthly o annual.
+    """
+    times = pd.to_datetime(da["time"].values)
+    if len(times) < 2:
+        return "unknown"
+
+    month_steps = np.diff(times.values.astype("datetime64[M]")).astype(int)
+
+    if np.all(month_steps == 1):
+        return "monthly"
+    if np.all(month_steps == 12):
+        return "annual"
+    return "irregular"
+
+
+def infer_time_resolution_from_data_dict(data_dict: dict[str, xr.DataArray]) -> str:
+    first_name = list(data_dict.keys())[0]
+    return infer_time_resolution_from_dataarray(data_dict[first_name])
 
 
 def _category_pair_correlation_by_month(
@@ -310,7 +345,9 @@ def _category_pair_correlation_with_lag(
     )
 
 
+# ------------------------------------------------------------
 # Carga de datos
+# ------------------------------------------------------------
 
 def load_metadata(metadata_path: str | Path) -> dict:
     """Carga el metadata.json del preprocesado."""
@@ -331,25 +368,6 @@ def _get_variables_block(metadata: dict) -> dict:
         return metadata["variables"]
 
     return metadata
-
-
-def infer_temporal_resolution_from_metadata(
-    metadata: dict,
-    reference_variable: str = "LAI",
-) -> str:
-    """
-    Infere la resolución temporal a partir del metadata.
-    """
-    variables_block = _get_variables_block(metadata)
-
-    if reference_variable not in variables_block:
-        raise KeyError(
-            f"La variable de referencia '{reference_variable}' no está en metadata. "
-            f"Variables disponibles: {list(variables_block.keys())}"
-        )
-
-    ref = variables_block[reference_variable]
-    return ref["processing"]["temporal_resolution"].lower()
 
 
 def build_coordinates_from_metadata(
@@ -400,9 +418,7 @@ def build_coordinates_from_metadata(
     elif temporal_resolution == "annual":
         time = pd.date_range(time_min, time_max, freq="YS")
     else:
-        raise ValueError(
-            f"temporal_resolution desconocida: {temporal_resolution}"
-        )
+        raise ValueError(f"temporal_resolution desconocida: {temporal_resolution}")
 
     latitude = np.linspace(lat_min, lat_max, n_lat, dtype=np.float32)
     longitude = np.linspace(lon_min, lon_max, n_lon, dtype=np.float32)
@@ -485,7 +501,9 @@ def load_processed_dataset(
     return data_dict, metadata
 
 
-# EDA estructural y univariante
+# ------------------------------------------------------------
+# EDA estructural
+# ------------------------------------------------------------
 
 def dataset_overview(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
     """
@@ -503,6 +521,7 @@ def dataset_overview(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
                 "variable": name,
                 "shape": tuple(da.shape),
                 "dims": tuple(da.dims),
+                "dtype": str(da.dtype),
                 "time_min": str(pd.to_datetime(da.time.min().item()).date()),
                 "time_max": str(pd.to_datetime(da.time.max().item()).date()),
                 "lat_min": float(da.latitude.min().item()),
@@ -518,12 +537,103 @@ def dataset_overview(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def dataset_structure_report(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
+    """
+    EDA estructural ampliado:
+    - shape y dims
+    - rango temporal y espacial
+    - NaN / Inf
+    - nº de timesteps completamente vacíos
+    - nº de píxeles completamente vacíos en el tiempo
+    """
+    rows = []
+
+    for name, da in data_dict.items():
+        values = da.values
+        finite_mask = np.isfinite(values)
+        n_total = int(values.size)
+        n_finite = int(finite_mask.sum())
+        n_nan = int(np.isnan(values).sum())
+        n_posinf = int(np.isposinf(values).sum())
+        n_neginf = int(np.isneginf(values).sum())
+        n_invalid = n_total - n_finite
+
+        all_nan_time = da.isnull().all(dim=("latitude", "longitude"))
+        all_nan_pixels = da.isnull().all(dim="time")
+
+        rows.append(
+            {
+                "variable": name,
+                "shape": tuple(da.shape),
+                "dims": tuple(da.dims),
+                "dtype": str(da.dtype),
+                "time_steps": int(da.sizes["time"]),
+                "n_lat": int(da.sizes["latitude"]),
+                "n_lon": int(da.sizes["longitude"]),
+                "time_min": str(pd.to_datetime(da.time.min().item()).date()),
+                "time_max": str(pd.to_datetime(da.time.max().item()).date()),
+                "lat_min": float(da.latitude.min().item()),
+                "lat_max": float(da.latitude.max().item()),
+                "lon_min": float(da.longitude.min().item()),
+                "lon_max": float(da.longitude.max().item()),
+                "n_total": n_total,
+                "n_finite": n_finite,
+                "n_invalid": n_invalid,
+                "n_nan": n_nan,
+                "n_posinf": n_posinf,
+                "n_neginf": n_neginf,
+                "pct_nan": 100 * n_nan / n_total if n_total else np.nan,
+                "pct_invalid": 100 * n_invalid / n_total if n_total else np.nan,
+                "empty_time_steps": int(all_nan_time.sum().item()),
+                "empty_pixels": int(all_nan_pixels.sum().item()),
+                "pct_empty_pixels": 100 * all_nan_pixels.mean().item(),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def missing_data_summary(da: xr.DataArray, name: str | None = None) -> dict:
+    """
+    Resumen de missingness por variable.
+    """
+    var_name = name or da.name or "variable"
+
+    total = int(da.size)
+    n_nan = int(da.isnull().sum().item())
+    pct_nan = 100 * n_nan / total if total else np.nan
+
+    empty_time = da.isnull().all(dim=("latitude", "longitude"))
+    empty_space = da.isnull().all(dim="time")
+    partial_time_nan = da.isnull().mean(dim=("latitude", "longitude"))
+
+    return {
+        "variable": var_name,
+        "n_total": total,
+        "n_nan": n_nan,
+        "pct_nan": pct_nan,
+        "empty_time_steps": int(empty_time.sum().item()),
+        "empty_pixels": int(empty_space.sum().item()),
+        "max_nan_share_in_time_step": float(partial_time_nan.max().item()),
+        "mean_nan_share_in_time_step": float(partial_time_nan.mean().item()),
+    }
+
+
+def missing_data_summary_df(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
+    rows = [missing_data_summary(da, name) for name, da in data_dict.items()]
+    return pd.DataFrame(rows)
+
+
+# ------------------------------------------------------------
+# EDA univariante
+# ------------------------------------------------------------
+
 def univariate_stats(da: xr.DataArray, name: str | None = None) -> dict:
     """
     Estadísticos descriptivos básicos.
 
     min/max/mean/std son exactos.
-    cuantiles se estiman por muestreo para no disparar RAM/CPU.
+    cuantiles, skew y kurtosis se estiman por muestreo para no disparar RAM/CPU.
     """
     var_name = name or da.name or "variable"
 
@@ -538,6 +648,7 @@ def univariate_stats(da: xr.DataArray, name: str | None = None) -> dict:
             "max": np.nan,
             "mean": np.nan,
             "std": np.nan,
+            "cv": np.nan,
             "p01": np.nan,
             "p05": np.nan,
             "p25": np.nan,
@@ -545,6 +656,10 @@ def univariate_stats(da: xr.DataArray, name: str | None = None) -> dict:
             "p75": np.nan,
             "p95": np.nan,
             "p99": np.nan,
+            "iqr": np.nan,
+            "range": np.nan,
+            "skew": np.nan,
+            "kurtosis_excess": np.nan,
             "n_nan": n_nan,
             "pct_nan": pct_nan,
         }
@@ -556,18 +671,24 @@ def univariate_stats(da: xr.DataArray, name: str | None = None) -> dict:
     )
 
     if sampled.size == 0:
-        q01 = q05 = q25 = q50 = q75 = q95 = q99 = np.nan
+        q01 = q05 = q25 = q50 = q75 = q95 = q99 = skew = kurt = np.nan
     else:
         q01, q05, q25, q50, q75, q95, q99 = np.quantile(
             sampled, [0.01, 0.05, 0.25, 0.50, 0.75, 0.95, 0.99]
         )
+        skew = _skewness(sampled)
+        kurt = _kurtosis_excess(sampled)
+
+    mean_val = float(da.mean(skipna=True).item())
+    std_val = float(da.std(skipna=True).item())
 
     return {
         "variable": var_name,
         "min": float(da.min(skipna=True).item()),
         "max": float(da.max(skipna=True).item()),
-        "mean": float(da.mean(skipna=True).item()),
-        "std": float(da.std(skipna=True).item()),
+        "mean": mean_val,
+        "std": std_val,
+        "cv": float(std_val / mean_val) if mean_val not in (0, np.nan) else np.nan,
         "p01": float(q01) if np.isfinite(q01) else np.nan,
         "p05": float(q05) if np.isfinite(q05) else np.nan,
         "p25": float(q25) if np.isfinite(q25) else np.nan,
@@ -575,6 +696,10 @@ def univariate_stats(da: xr.DataArray, name: str | None = None) -> dict:
         "p75": float(q75) if np.isfinite(q75) else np.nan,
         "p95": float(q95) if np.isfinite(q95) else np.nan,
         "p99": float(q99) if np.isfinite(q99) else np.nan,
+        "iqr": float(q75 - q25) if np.isfinite(q75) and np.isfinite(q25) else np.nan,
+        "range": float(da.max(skipna=True).item() - da.min(skipna=True).item()),
+        "skew": float(skew) if np.isfinite(skew) else np.nan,
+        "kurtosis_excess": float(kurt) if np.isfinite(kurt) else np.nan,
         "n_nan": n_nan,
         "pct_nan": pct_nan,
     }
@@ -586,7 +711,17 @@ def univariate_stats_df(data_dict: dict[str, xr.DataArray]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# EDA espacial y temporal
+def histogram_sample(
+    da: xr.DataArray,
+    max_points: int = DEFAULT_STATS_MAX_POINTS,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> np.ndarray:
+    return _sample_valid_values_1d(arr=da.values, max_points=max_points, seed=seed)
+
+
+# ------------------------------------------------------------
+# EDA espacial y temporal univariante
+# ------------------------------------------------------------
 
 def temporal_mean_map(da: xr.DataArray) -> xr.DataArray:
     """Mapa de media temporal."""
@@ -598,9 +733,36 @@ def temporal_std_map(da: xr.DataArray) -> xr.DataArray:
     return da.std(dim="time", skipna=True)
 
 
+def spatial_nan_fraction_map(da: xr.DataArray) -> xr.DataArray:
+    """Fracción de NaN por píxel a lo largo del tiempo."""
+    return da.isnull().mean(dim="time")
+
+
 def spatial_mean_timeseries(da: xr.DataArray) -> xr.DataArray:
     """Serie temporal de la media espacial."""
     return da.mean(dim=("latitude", "longitude"), skipna=True)
+
+
+def spatial_std_timeseries(da: xr.DataArray) -> xr.DataArray:
+    """Serie temporal de la desviación estándar espacial."""
+    return da.std(dim=("latitude", "longitude"), skipna=True)
+
+
+def temporal_anomaly_series(da: xr.DataArray) -> xr.DataArray:
+    """
+    Serie temporal de anomalías de la media espacial.
+
+    - monthly: anomalía respecto a la climatología mensual
+    - annual / irregular: anomalía respecto a la media global
+    """
+    ts = spatial_mean_timeseries(da)
+    resolution = infer_time_resolution_from_dataarray(da)
+
+    if resolution == "monthly":
+        clim = ts.groupby("time.month").mean(dim="time", skipna=True)
+        return ts.groupby("time.month") - clim
+
+    return ts - ts.mean(dim="time", skipna=True)
 
 
 def monthly_climatology(da: xr.DataArray) -> xr.DataArray:
@@ -618,7 +780,9 @@ def monthly_anomalies(da: xr.DataArray) -> xr.DataArray:
     return ts.groupby("time.month") - clim
 
 
-# EDA multivariante
+# ------------------------------------------------------------
+# EDA multivariante global
+# ------------------------------------------------------------
 
 def _paired_valid_values(da1: xr.DataArray, da2: xr.DataArray) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -653,15 +817,17 @@ def target_predictor_correlation_table(
     """Tabla de correlación global target-predictors."""
     rows = []
     for name, da in predictors.items():
+        corr_val = global_flattened_correlation(target, da)
         rows.append(
             {
                 "predictor": name,
-                "correlation_with_target": global_flattened_correlation(target, da),
+                "correlation_with_target": corr_val,
+                "abs_correlation_with_target": float(np.abs(corr_val)) if np.isfinite(corr_val) else np.nan,
             }
         )
 
     return pd.DataFrame(rows).sort_values(
-        "correlation_with_target", ascending=False
+        "abs_correlation_with_target", ascending=False
     ).reset_index(drop=True)
 
 
@@ -697,20 +863,131 @@ def global_correlation_matrix_sampled(
     return pd.DataFrame(corr, index=var_names, columns=var_names)
 
 
-def global_correlation_matrix(
+def sampled_joint_dataframe(
     data_dict: dict[str, xr.DataArray],
+    variable_names: list[str] | None = None,
+    max_points: int = 50_000,
+    seed: int = DEFAULT_RANDOM_SEED,
 ) -> pd.DataFrame:
     """
-    Alias de compatibilidad.
+    DataFrame conjunto muestreado con filas completas válidas para múltiples variables.
+    Útil para VIF y colinealidad.
     """
-    return global_correlation_matrix_sampled(data_dict)
+    if variable_names is None:
+        variable_names = list(data_dict.keys())
 
+    arrays = [data_dict[name].values.ravel() for name in variable_names]
+    n_total = arrays[0].size
+    rng = np.random.default_rng(seed)
+
+    target_size = min(max_points, n_total)
+    chunk_size = min(max(target_size * 4, 20_000), n_total)
+
+    collected = []
+
+    for _ in range(DEFAULT_SCATTER_MAX_ATTEMPTS * 3):
+        idx = rng.integers(0, n_total, size=chunk_size, endpoint=False)
+        block = np.column_stack([_to_float32_view(arr[idx]) for arr in arrays])
+        valid = np.isfinite(block).all(axis=1)
+        if valid.any():
+            collected.append(block[valid])
+
+        current = sum(x.shape[0] for x in collected)
+        if current >= target_size:
+            break
+
+    if not collected:
+        return pd.DataFrame(columns=variable_names)
+
+    out = np.vstack(collected)
+    if out.shape[0] > target_size:
+        sel = rng.choice(out.shape[0], size=target_size, replace=False)
+        out = out[sel]
+
+    return pd.DataFrame(out, columns=variable_names)
+
+
+def vif_table(
+    data_dict: dict[str, xr.DataArray],
+    variable_names: list[str] | None = None,
+    max_points: int = 50_000,
+    seed: int = DEFAULT_RANDOM_SEED,
+) -> pd.DataFrame:
+    """
+    Calcula VIF aproximado a partir de una muestra conjunta válida.
+    Implementación ligera usando mínimos cuadrados con numpy.
+    """
+    if variable_names is None:
+        variable_names = list(data_dict.keys())
+
+    df = sampled_joint_dataframe(
+        data_dict=data_dict,
+        variable_names=variable_names,
+        max_points=max_points,
+        seed=seed,
+    )
+
+    if df.empty or df.shape[1] < 2:
+        return pd.DataFrame(columns=["variable", "r2_against_others", "vif"])
+
+    rows = []
+    X_all = df.values.astype(np.float64, copy=False)
+
+    for i, name in enumerate(variable_names):
+        y = X_all[:, i]
+        X_other = np.delete(X_all, i, axis=1)
+
+        X_design = np.column_stack([np.ones(X_other.shape[0]), X_other])
+
+        beta, *_ = np.linalg.lstsq(X_design, y, rcond=None)
+        y_hat = X_design @ beta
+
+        ss_res = np.sum((y - y_hat) ** 2)
+        ss_tot = np.sum((y - y.mean()) ** 2)
+
+        if ss_tot == 0:
+            r2 = np.nan
+            vif = np.nan
+        else:
+            r2 = 1 - ss_res / ss_tot
+            if r2 >= 1:
+                vif = np.inf
+            else:
+                vif = 1 / (1 - r2)
+
+        rows.append(
+            {
+                "variable": name,
+                "r2_against_others": float(r2) if np.isfinite(r2) else np.nan,
+                "vif": float(vif) if np.isfinite(vif) else np.inf if vif == np.inf else np.nan,
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values("vif", ascending=False).reset_index(drop=True)
+
+
+# ------------------------------------------------------------
+# EDA espacial y temporal multivariante
+# ------------------------------------------------------------
 
 def pixelwise_correlation(da1: xr.DataArray, da2: xr.DataArray) -> xr.DataArray:
     """
     Correlación temporal por píxel.
     """
     return xr.corr(da1.astype(np.float32), da2.astype(np.float32), dim="time")
+
+
+def pixelwise_lagged_correlation(
+    target: xr.DataArray,
+    predictor: xr.DataArray,
+    lag_steps: int,
+) -> xr.DataArray:
+    """
+    Corr(target(t), predictor(t-lag)) por píxel.
+    """
+    if lag_steps < 0:
+        raise ValueError("lag_steps debe ser >= 0")
+    return pixelwise_correlation(target, predictor.shift(time=lag_steps))
 
 
 def sample_valid_pixels(
@@ -779,31 +1056,105 @@ def sample_pixel_correlation_table(
     return pd.DataFrame(rows)
 
 
-def sample_scatter_dataframe(
-    da_x: xr.DataArray,
-    da_y: xr.DataArray,
-    x_name: str,
-    y_name: str,
-    max_points: int = 5000,
-    seed: int = DEFAULT_RANDOM_SEED,
-) -> pd.DataFrame:
+def spatial_correlation_per_timestep(
+    target: xr.DataArray,
+    predictor: xr.DataArray,
+) -> xr.DataArray:
     """
-    DataFrame muestreado para scatter/hexbin sin cargar todos los puntos válidos.
+    Correlación espacial por timestep entre target y predictor.
+    En cada fecha, correlaciona los píxeles entre sí.
     """
-    x, y = _sample_valid_pairs_flat(
-        da1=da_x,
-        da2=da_y,
-        max_points=max_points,
-        seed=seed,
+    out = []
+    for t in range(target.sizes["time"]):
+        a = _to_float32_view(target.isel(time=t).values.ravel())
+        b = _to_float32_view(predictor.isel(time=t).values.ravel())
+        valid = np.isfinite(a) & np.isfinite(b)
+
+        if valid.sum() < 2:
+            out.append(np.nan)
+        else:
+            out.append(_corr_from_vectors(a[valid], b[valid]))
+
+    return xr.DataArray(
+        np.asarray(out, dtype=np.float32),
+        coords={"time": target.time},
+        dims=("time",),
+        name=f"spatial_corr_{target.name}_{predictor.name}",
     )
 
-    if x.size == 0:
-        return pd.DataFrame(columns=[x_name, y_name])
 
-    return pd.DataFrame({x_name: x, y_name: y})
+def spatial_correlation_timeseries_df(
+    target: xr.DataArray,
+    predictors: dict[str, xr.DataArray],
+) -> pd.DataFrame:
+    """
+    DataFrame tiempo x predictor con la correlación espacial en cada timestep.
+    """
+    df = pd.DataFrame(index=pd.to_datetime(target.time.values))
+    for name, predictor in predictors.items():
+        df[name] = spatial_correlation_per_timestep(target, predictor).values
+    df.index.name = "time"
+    return df
 
 
+def spatial_correlation_summary(
+    target: xr.DataArray,
+    predictors: dict[str, xr.DataArray],
+) -> pd.DataFrame:
+    """
+    Resumen de la correlación espacial por timestep.
+    """
+    df = spatial_correlation_timeseries_df(target, predictors)
+
+    rows = []
+    for name in df.columns:
+        s = df[name].astype(float)
+        rows.append(
+            {
+                "predictor": name,
+                "mean_spatial_corr": float(s.mean()),
+                "std_spatial_corr": float(s.std()),
+                "min_spatial_corr": float(s.min()),
+                "max_spatial_corr": float(s.max()),
+                "positive_fraction": float((s > 0).mean()),
+            }
+        )
+
+    return pd.DataFrame(rows).sort_values(
+        "mean_spatial_corr", ascending=False
+    ).reset_index(drop=True)
+
+
+def spatial_correlation_dominance_table(
+    target: xr.DataArray,
+    predictors: dict[str, xr.DataArray],
+) -> pd.DataFrame:
+    """
+    Qué predictor domina más veces en la correlación espacial por timestep.
+    """
+    df = spatial_correlation_timeseries_df(target, predictors)
+    if df.empty:
+        return pd.DataFrame(columns=["predictor", "n_times_best", "pct_times_best"])
+
+    abs_df = df.abs()
+    best_predictor = abs_df.idxmax(axis=1)
+
+    counts = best_predictor.value_counts(dropna=True)
+    total = counts.sum()
+
+    out = pd.DataFrame(
+        {
+            "predictor": counts.index,
+            "n_times_best": counts.values,
+            "pct_times_best": 100 * counts.values / total if total > 0 else np.nan,
+        }
+    )
+    return out.reset_index(drop=True)
+
+
+# ------------------------------------------------------------
 # EDA temporal target vs predictores
+# ------------------------------------------------------------
 
 def monthly_target_predictor_correlation(
     target: xr.DataArray,
@@ -911,7 +1262,9 @@ def best_lag_table(
     ).reset_index(drop=True)
 
 
+# ------------------------------------------------------------
 # Utilidades mínimas para plotting externo
+# ------------------------------------------------------------
 
 def subplot_grid(n_items: int, ncols: int = 2) -> tuple[int, int]:
     """Devuelve (nrows, ncols) para una rejilla simple de subplots."""
@@ -919,71 +1272,31 @@ def subplot_grid(n_items: int, ncols: int = 2) -> tuple[int, int]:
     return nrows, ncols
 
 
-# GeoTIFF / categorías
-
-def load_tiff_as_dataarray(
-    tiff_path: str | Path,
-    latitude: np.ndarray,
-    longitude: np.ndarray,
-    name: str,
-) -> xr.DataArray:
+def triangular_correlation_matrix(
+    corr_df: pd.DataFrame,
+    triangle: str = "lower",
+    keep_diagonal: bool = True,
+) -> pd.DataFrame:
     """
-    Carga un GeoTIFF 2D alineado con el grid del dataset principal
-    y lo convierte en DataArray con coords latitude/longitude.
+    Devuelve solo media matriz (upper o lower), dejando el resto como NaN.
     """
-    tiff_path = Path(tiff_path)
+    out = corr_df.copy()
+    n = out.shape[0]
 
-    with rasterio.open(tiff_path) as src:
-        arr = src.read(1)
+    if triangle not in {"lower", "upper"}:
+        raise ValueError("triangle debe ser 'lower' o 'upper'.")
 
-    expected_shape = (len(latitude), len(longitude))
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f"Shape del TIFF {arr.shape} no coincide con el grid esperado {expected_shape}"
-        )
+    for i in range(n):
+        for j in range(n):
+            if triangle == "lower":
+                cond = j > i if keep_diagonal else j >= i
+            else:
+                cond = j < i if keep_diagonal else j <= i
+            if cond:
+                out.iat[i, j] = np.nan
 
-    arr = np.flipud(arr)
+    return out
 
-    return xr.DataArray(
-        arr,
-        coords={
-            "latitude": latitude,
-            "longitude": longitude,
-        },
-        dims=("latitude", "longitude"),
-        name=name,
-    )
-
-
-
-def load_npy_mask_as_dataarray(
-    npy_path: str | Path,
-    latitude: np.ndarray,
-    longitude: np.ndarray,
-    name: str,
-) -> xr.DataArray:
-    """
-    Carga una máscara 2D desde .npy ya guardada en convención del pipeline:
-    latitude ascendente (-90 -> 90), longitude ascendente (-180 -> 180).
-    """
-    npy_path = Path(npy_path)
-    arr = np.load(npy_path)
-
-    expected_shape = (len(latitude), len(longitude))
-    if arr.shape != expected_shape:
-        raise ValueError(
-            f"Shape del NPY {arr.shape} no coincide con el grid esperado {expected_shape}"
-        )
-
-    return xr.DataArray(
-        arr,
-        coords={
-            "latitude": latitude,
-            "longitude": longitude,
-        },
-        dims=("latitude", "longitude"),
-        name=name,
-    )
 
 def apply_categorical_mask(
     da: xr.DataArray,
@@ -1001,28 +1314,6 @@ def apply_categorical_mask(
         condition = condition | (category_mask == value)
 
     return da.where(condition)
-
-
-def subset_data_dict_by_category(
-    data_dict: dict[str, xr.DataArray],
-    category_mask: xr.DataArray,
-    category_values: list[int] | tuple[int, ...],
-) -> dict[str, xr.DataArray]:
-    """
-    Devuelve un diccionario de variables enmascaradas para una o varias categorías.
-    """
-    return {
-        name: apply_categorical_mask(da, category_mask, category_values)
-        for name, da in data_dict.items()
-    }
-
-
-def valid_pixel_count(masked_da: xr.DataArray) -> int:
-    """
-    Número de píxeles espaciales con al menos un valor válido en el tiempo.
-    """
-    valid = masked_da.notnull().any(dim="time")
-    return int(valid.sum().item())
 
 
 def category_summary_table(
@@ -1126,10 +1417,24 @@ def category_target_predictor_correlation_table(
                     "category_label": label,
                     "predictor": predictor_name,
                     "correlation_with_target": corr_value,
+                    "abs_correlation_with_target": float(np.abs(corr_value)) if np.isfinite(corr_value) else np.nan,
                 }
             )
 
     return pd.DataFrame(rows)
+
+
+def category_correlation_pivot_by_category(
+    corr_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Pivot clásico: filas=categorías, columnas=predictores.
+    """
+    return corr_df.pivot(
+        index="category_label",
+        columns="predictor",
+        values="correlation_with_target",
+    )
 
 
 def category_monthly_correlation_tables(
@@ -1222,7 +1527,9 @@ def category_lagged_correlation_tables(
     return out
 
 
+# ------------------------------------------------------------
 # Predictor dominante: mapas globales y categóricos
+# ------------------------------------------------------------
 
 def _pixelwise_correlation_block(
     target_block: np.ndarray,
@@ -1432,13 +1739,6 @@ def categorical_dominant_predictor_map(
         dims=category_mask.dims,
         name="categorical_dominant_predictor_map",
     )
-
-
-def predictor_code_dict(predictor_names: list[str]) -> dict[int, str]:
-    """
-    Diccionario código -> predictor.
-    """
-    return {i + 1: name for i, name in enumerate(predictor_names)}
 
 
 def plot_dominant_predictor_map(

@@ -48,9 +48,11 @@ def build_scaler(scaler_name: str | None):
 def load_train_arrays(
     input_dir: str | Path,
     mmap_mode: str | None = "r",
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    return_trace: bool = False,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]] | tuple[np.ndarray, np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
     """
     Carga X_train, y_train y dataset_metadata desde un directorio tabular exportado.
+    Si return_trace=True, tambien carga las trazas por observacion de train.
     """
     input_dir = Path(input_dir)
 
@@ -80,7 +82,42 @@ def load_train_arrays(
     if X_train.shape[0] != y_train.shape[0]:
         raise ValueError("X_train e y_train no tienen el mismo número de filas.")
 
-    return X_train, y_train, metadata
+    if not return_trace:
+        return X_train, y_train, metadata
+
+    trace = {
+        "pixel_id_train": np.load(input_dir / "pixel_id_train.npy", mmap_mode=mmap_mode),
+        "lat_idx_train": np.load(input_dir / "lat_idx_train.npy", mmap_mode=mmap_mode),
+        "lon_idx_train": np.load(input_dir / "lon_idx_train.npy", mmap_mode=mmap_mode),
+        "time_idx_train": np.load(input_dir / "time_idx_train.npy", mmap_mode=mmap_mode),
+    }
+
+    for name, values in trace.items():
+        if values.shape[0] != X_train.shape[0]:
+            raise ValueError(f"{name} no tiene el mismo numero de filas que X_train.")
+
+    return X_train, y_train, trace, metadata
+
+
+def load_test_arrays(
+    input_dir: str | Path,
+    mmap_mode: str | None = "r",
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray], dict[str, Any]]:
+    input_dir = Path(input_dir)
+
+    X_test = np.load(input_dir / "X_test.npy", mmap_mode=mmap_mode)
+    y_test = np.load(input_dir / "y_test.npy", mmap_mode=mmap_mode)
+    trace = {
+        "pixel_id_test": np.load(input_dir / "pixel_id_test.npy", mmap_mode=mmap_mode),
+        "lat_idx_test": np.load(input_dir / "lat_idx_test.npy", mmap_mode=mmap_mode),
+        "lon_idx_test": np.load(input_dir / "lon_idx_test.npy", mmap_mode=mmap_mode),
+        "time_idx_test": np.load(input_dir / "time_idx_test.npy", mmap_mode=mmap_mode),
+    }
+
+    with open(input_dir / "dataset_metadata.json", "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    return X_test, y_test, trace, metadata
 
 
 # TRAIN
@@ -365,6 +402,8 @@ def train_tabular_model(
         "n_features": int(X_train.shape[1]),
         "X_dtype": str(X_train.dtype),
         "y_dtype": str(y_train.dtype),
+        "mlflow_run_id": mlflow_run_id,
+        "mlflow_experiment": mlflow_experiment,
     }
 
     return {
@@ -385,22 +424,32 @@ def save_trained_pipeline(
     scaler,
     train_info: dict[str, Any],
     dataset_metadata: dict[str, Any],
-    prefix: str,
+    prefix: str | None = None,
 ) -> dict[str, str | None]:
     """
     Guarda modelo, scaler y metadata de entrenamiento.
 
-    Guarda:
+    Por defecto usa la convencion nueva:
+    - model.joblib
+    - scaler.joblib (si aplica)
+    - train_info.json
+
+    Si se pasa prefix, conserva compatibilidad con artefactos antiguos:
     - {prefix}_model.joblib
-    - {prefix}_scaler.joblib (si aplica)
+    - {prefix}_scaler.joblib
     - {prefix}_train_info.json
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = output_dir / f"{prefix}_model.joblib"
-    scaler_path = output_dir / f"{prefix}_scaler.joblib"
-    train_info_path = output_dir / f"{prefix}_train_info.json"
+    if prefix:
+        model_path = output_dir / f"{prefix}_model.joblib"
+        scaler_path = output_dir / f"{prefix}_scaler.joblib"
+        train_info_path = output_dir / f"{prefix}_train_info.json"
+    else:
+        model_path = output_dir / "model.joblib"
+        scaler_path = output_dir / "scaler.joblib"
+        train_info_path = output_dir / "train_info.json"
 
     joblib.dump(model, model_path)
 
@@ -411,7 +460,6 @@ def save_trained_pipeline(
         scaler_path_str = None
 
     payload = {
-        # info de entrenamiento
         "prefix": prefix,
         "model_name_requested": train_info.get("model_name_requested"),
         "model_name": train_info.get("model_name"),
@@ -422,13 +470,17 @@ def save_trained_pipeline(
         "n_features": train_info.get("n_features"),
         "X_dtype": train_info.get("X_dtype"),
         "y_dtype": train_info.get("y_dtype"),
+        "hyperparameter_search": train_info.get("hyperparameter_search"),
+        "mlflow_run_id": train_info.get("mlflow_run_id"),
+        "mlflow_experiment": train_info.get("mlflow_experiment"),
 
         # info del dataset tabular
         "feature_names": dataset_metadata.get("feature_names"),
         "target": dataset_metadata.get("target"),
         "dataset_n_train": dataset_metadata.get("n_train"),
         "dataset_n_test": dataset_metadata.get("n_test"),
-        "dataset_prefix": dataset_metadata.get("prefix"),
+        "split_mode": dataset_metadata.get("split_mode"),
+        "split_metadata": dataset_metadata.get("split_metadata"),
         "temporal_resolution_inferred": dataset_metadata.get("temporal_resolution_inferred"),
         "time_start": dataset_metadata.get("time_start"),
         "time_end": dataset_metadata.get("time_end"),
@@ -449,7 +501,6 @@ def save_trained_pipeline(
         "scaler_path": scaler_path_str,
         "train_info_path": str(train_info_path),
     }
-
 
 def load_trained_pipeline(
     model_path: str | Path,
