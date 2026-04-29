@@ -1,0 +1,12 @@
+[project]
+main_dir = "/home/dani/github/profecia/data" 
+
+[data]
+temporal_resolution = "monthly" # "monthly" o "annual"
+mask_names = ["land"] # ["land", "ebf", "bs"]
+start_year = 1982
+end_year_inclusive = 2022
+dtype = "float32"
+
+# roi = { lat_min = -60.0, lat_max = 80.0, lon_min = -180.0, lon_max = 180.0 }
+# Si no se define, se usa todo el globo disponible.
