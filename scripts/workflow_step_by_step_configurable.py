@@ -60,8 +60,6 @@ LOGGER = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(os.getenv("PROFECIA_TRAIN_CONFIG", "config/train.toml"))
 STOP_ON_ERROR = os.getenv("PROFECIA_STOP_ON_ERROR", "true").lower().strip() not in {"0", "false", "no"}
-MLFLOW_ENABLED = os.getenv("PROFECIA_MLFLOW_ENABLED", "false").lower().strip() in {"1", "true", "yes"}
-MLFLOW_EXPERIMENT_NAME = os.getenv("PROFECIA_MLFLOW_EXPERIMENT")
 LOG_SHAP = os.getenv("PROFECIA_LOG_SHAP", "false").lower().strip() in {"1", "true", "yes"}
 
 
@@ -91,14 +89,20 @@ def save_json(path: Path, payload: dict) -> None:
 
 
 def build_mlflow_config(cfg: dict) -> dict | None:
-    if not MLFLOW_ENABLED:
+    mlflow_cfg = cfg.get("mlflow", {})
+    mlflow_enabled = bool(mlflow_cfg.get("enabled", False))
+    if not mlflow_enabled:
         return None
 
-    experiment_name = MLFLOW_EXPERIMENT_NAME or f"profecia/{cfg['processed_run_name']}/{cfg['split_mode']}"
+    experiment_name = (
+        mlflow_cfg.get("experiment_name")
+        or os.getenv("PROFECIA_MLFLOW_EXPERIMENT")
+        or f"profecia/{cfg['processed_run_name']}/{cfg['split_mode']}"
+    )
     return {
-        "tracking_uri": os.getenv("MLFLOW_TRACKING_URI"),
-        "user": os.getenv("MLFLOW_TRACKING_USERNAME"),
-        "password": os.getenv("MLFLOW_TRACKING_PASSWORD"),
+        "tracking_uri": mlflow_cfg.get("tracking_uri") or os.getenv("MLFLOW_TRACKING_URI"),
+        "user": mlflow_cfg.get("tracking_username") or os.getenv("MLFLOW_TRACKING_USERNAME"),
+        "password": mlflow_cfg.get("tracking_password") or os.getenv("MLFLOW_TRACKING_PASSWORD"),
         "experiment_name": experiment_name,
         "run_name": cfg["model_run_name"],
     }
