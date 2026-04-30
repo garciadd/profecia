@@ -13,6 +13,12 @@ dist/
 # Virtual environments
 .venv/
 
+# Local artifacts
+mlruns/
+mlflow.db
+nohup.out
+exports.txt
+
 /data/
 docs/
 

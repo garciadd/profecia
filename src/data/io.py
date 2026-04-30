@@ -14,11 +14,29 @@ import xarray as xr
 FILE_MAP = {
     "LAI": "lai_1982_2022_monthly_0.5deg.nc",
     "SM1": "swvl1_1982_2022_monthly_0.5deg.nc",
+    "SM1_LAG_1": "swvl1_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "SM1_LAG_2": "swvl1_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "SM1_LAG_3": "swvl1_lag3_months_1982_2022_monthly_0.5deg.nc",
     "SM2": "subswc_1982_2022_monthly_0.5deg.nc",
+    "SM2_LAG_1": "subswc_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "SM2_LAG_2": "subswc_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "SM2_LAG_3": "subswc_lag3_months_1982_2022_monthly_0.5deg.nc",
     "TP": "tp_1982_2022_monthly_0.5deg.nc",
+    "TP_LAG_1": "tp_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "TP_LAG_2": "tp_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "TP_LAG_3": "tp_lag3_months_1982_2022_monthly_0.5deg.nc",
     "T2M": "t2m_1982_2022_monthly_0.5deg.nc",
+    "T2M_LAG_1": "t2m_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "T2M_LAG_2": "t2m_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "T2M_LAG_3": "t2m_lag3_months_1982_2022_monthly_0.5deg.nc",
     "SSRD": "ssrd_1982_2022_monthly_0.5deg.nc",
+    "SSRD_LAG_1": "ssrd_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "SSRD_LAG_2": "ssrd_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "SSRD_LAG_3": "ssrd_lag3_months_1982_2022_monthly_0.5deg.nc",
     "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
+    "VPD_LAG_1": "vpd_lag1_months_1982_2022_monthly_0.5deg.nc",
+    "VPD_LAG_2": "vpd_lag2_months_1982_2022_monthly_0.5deg.nc",
+    "VPD_LAG_3": "vpd_lag3_months_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
@@ -28,6 +46,8 @@ MASK_MAP = {
     "bs": "bs_mask_0p5deg.npy",
     "climate": "climate_mask_0p5_5classes.npy",
     "landcover": "landcover_mask_0p5_7classes.npy",
+    "landcover_grassland": "landcover_grassland_0p5deg.npy",
+    "landcover_forest": "landcover_forest_0p5deg.npy",
 }
 
 STANDARD_DIM_NAMES = {
@@ -332,7 +352,7 @@ def build_combined_filter_mask(
     if not masks:
         return None, {"mask_names": [], "combined_fraction_kept": None}
 
-    allowed = {"land", "bs", "ebf", "climate", "landcover"}
+    allowed = MASK_MAP.keys()
     unknown = set(masks) - allowed
     if unknown:
         raise ValueError(f"Máscaras no soportadas: {sorted(unknown)}")
@@ -349,6 +369,8 @@ def build_combined_filter_mask(
             part = xr.apply_ufunc(np.isin, mask, np.array(sorted(CLIMATE_VALID_CODES))).astype(bool)
         elif name == "landcover":
             part = xr.apply_ufunc(np.isin, mask, np.array(sorted(LANDCOVER_VALID_CODES))).astype(bool)
+        else:
+            part = mask.astype(bool)
         parts.append(part)
 
     combined = parts[0]
