@@ -4,11 +4,6 @@ from pathlib import Path
 import tomllib
 
 
-VARIABLE_NAMES = ["LAI", "SM1", "SM2", "TP", "T2M", "SSRD", "VPD"]
-TARGET_NAME = "LAI"
-PREDICTOR_NAMES = [v for v in VARIABLE_NAMES if v != TARGET_NAME]
-
-
 def _load_toml(path: str | Path) -> dict:
     path = Path(path)
     with open(path, "rb") as f:
@@ -17,6 +12,10 @@ def _load_toml(path: str | Path) -> dict:
 
 def _normalize_mask_names(mask_names: list[str]) -> list[str]:
     return [m.lower().strip() for m in mask_names]
+
+
+def _normalize_variable_names(variable_names: list[str]) -> list[str]:
+    return [str(v).upper().strip() for v in variable_names]
 
 
 def _fraction_tag(value: float) -> str:
@@ -50,6 +49,15 @@ def resolve_data_config(config_path: str | Path = "config/data.toml") -> dict:
     main_dir = Path(raw["project"]["main_dir"])
     temporal_resolution = raw["data"]["temporal_resolution"].lower().strip()
     mask_names = _normalize_mask_names(raw["data"].get("mask_names", []))
+    variable_names = _normalize_variable_names(raw["data"]["variable_names"])
+    target_name = str(raw["data"]["target_name"]).upper().strip()
+
+    if not variable_names:
+        raise ValueError("data.variable_names no puede estar vacío.")
+    if target_name not in variable_names:
+        raise ValueError("data.target_name debe estar incluido en data.variable_names.")
+
+    predictor_names = [v for v in variable_names if v != target_name]
 
     cfg = {
         "config_path": str(config_path),
@@ -57,9 +65,9 @@ def resolve_data_config(config_path: str | Path = "config/data.toml") -> dict:
         "raw_dir": main_dir / "raw",
         "processed_base_dir": main_dir / "processed",
         "mask_dir": main_dir / "masks",
-        "variable_names": list(VARIABLE_NAMES),
-        "target_name": TARGET_NAME,
-        "predictor_names": list(PREDICTOR_NAMES),
+        "variable_names": variable_names,
+        "target_name": target_name,
+        "predictor_names": predictor_names,
         "temporal_resolution": temporal_resolution,
         "mask_names": mask_names,
         "start_year": int(raw["data"]["start_year"]),
@@ -96,9 +104,9 @@ def resolve_train_config(config_path: str | Path = "config/train.toml") -> dict:
         "processed_run_name": data_cfg["run_name"],
         "processed_dir": data_cfg["output_dir"],
         "mask_dir": data_cfg["mask_dir"],
-        "variable_names": list(VARIABLE_NAMES),
-        "target_name": TARGET_NAME,
-        "predictor_names": list(PREDICTOR_NAMES),
+        "variable_names": list(data_cfg["variable_names"]),
+        "target_name": data_cfg["target_name"],
+        "predictor_names": list(data_cfg["predictor_names"]),
         "split_mode": split_mode,
         "train_fraction": train_fraction,
         "test_fraction": test_fraction,

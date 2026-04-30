@@ -44,7 +44,7 @@ max_samples = 0.3
 # validation_fraction = 0.1
 
 [cv]
-enabled = true
+enabled = false
 n_splits = 5
 n_iter = 25
 scoring = "neg_root_mean_squared_error"
