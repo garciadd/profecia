@@ -170,7 +170,23 @@ def build_split_and_export(cfg: dict, processed_dir: Path) -> tuple[dict, dict]:
         reference_variable=cfg["target_name"],
     )
     target = data_dict[cfg["target_name"]]
-    predictors = {name: data_dict[name] for name in cfg["predictor_names"]}
+    predictors: dict[str, object] = {}
+    for name in cfg["predictor_names"]:
+        if name in data_dict:
+            predictors[name] = data_dict[name]
+            continue
+
+        expanded_names = sorted(key for key in data_dict if key.startswith(f"{name}_"))
+        if not expanded_names:
+            raise KeyError(name)
+
+        LOGGER.info(
+            "Predictor %s expanded to derived variables: %s",
+            name,
+            ", ".join(expanded_names),
+        )
+        for expanded_name in expanded_names:
+            predictors[expanded_name] = data_dict[expanded_name]
 
     LOGGER.info("Building split mode=%s", cfg["split_mode"])
     split_result = make_train_test_split(

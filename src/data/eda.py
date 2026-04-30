@@ -472,6 +472,10 @@ def load_processed_dataset(
 ) -> tuple[dict[str, xr.DataArray], dict]:
     """
     Carga metadata + variables .npy y devuelve un diccionario de DataArrays.
+
+    Si no existe `VARIABLE.npy`, busca ficheros `VARIABLE_*.npy` y carga
+    cada coincidencia como una variable independiente usando el stem del
+    fichero como nombre.
     """
     input_dir = Path(input_dir)
     metadata = load_metadata(input_dir / "metadata.json")
@@ -487,16 +491,28 @@ def load_processed_dataset(
     data_dict: dict[str, xr.DataArray] = {}
     for name in variable_names:
         npy_path = input_dir / f"{name}.npy"
-        if not npy_path.exists():
-            raise FileNotFoundError(f"No existe el archivo: {npy_path}")
+        candidate_paths: list[Path]
+        if npy_path.exists():
+            candidate_paths = [npy_path]
+        else:
+            candidate_paths = sorted(input_dir.glob(f"{name}_*.npy"))
+            if not candidate_paths:
+                raise FileNotFoundError(
+                    f"No existe el archivo: {npy_path} ni ficheros con prefijo {name}_*.npy"
+                )
 
-        data_dict[name] = build_dataarray_from_npy(
-            npy_path=npy_path,
-            time=time,
-            latitude=latitude,
-            longitude=longitude,
-            name=name,
-        )
+        for candidate_path in candidate_paths:
+            candidate_name = candidate_path.stem.upper()
+            if candidate_name in data_dict:
+                continue
+
+            data_dict[candidate_name] = build_dataarray_from_npy(
+                npy_path=candidate_path,
+                time=time,
+                latitude=latitude,
+                longitude=longitude,
+                name=candidate_name,
+            )
 
     return data_dict, metadata
 
