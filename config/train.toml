@@ -17,11 +17,11 @@ random_state = 42
 [model.params]
 
 # si model.name = "rf":
-n_estimators = 50
+n_estimators = 250
 max_depth = 20
-min_samples_leaf = 5
+min_samples_leaf = 4
 max_features = "sqrt"
-n_jobs = 1
+n_jobs = 2
 bootstrap = true
 max_samples = 0.3
 
@@ -45,7 +45,7 @@ max_samples = 0.3
 # validation_fraction = 0.1
 
 [cv]
-enabled = true
+enabled = false
 n_splits = 5
 n_iter = 25
 scoring = "neg_root_mean_squared_error"
