@@ -37,6 +37,8 @@ FILE_MAP = {
     "VPD_LAG_1": "vpd_lag1_months_1982_2022_monthly_0.5deg.nc",
     "VPD_LAG_2": "vpd_lag2_months_1982_2022_monthly_0.5deg.nc",
     "VPD_LAG_3": "vpd_lag3_months_1982_2022_monthly_0.5deg.nc",
+    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
+    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
