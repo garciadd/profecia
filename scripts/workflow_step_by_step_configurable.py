@@ -311,6 +311,7 @@ def save_evaluation_outputs(
     prediction_df.head(20_000).to_csv(prediction_sample_path, index=False)
 
     global_hexbin_path = out_dir / "hexbin_global.png"
+    global_scatter_path = out_dir / "scatter_global.png"
     residual_hist_path = out_dir / "residual_hist.png"
     best_worst_pixels_path = out_dir / "best_worst_pixels_hexbin.png"
 
@@ -325,6 +326,18 @@ def save_evaluation_outputs(
     fig.colorbar(hb, ax=ax, label="Samples")
     fig.tight_layout()
     fig.savefig(global_hexbin_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.scatter(prediction_df["y_true"], prediction_df["y_pred"], alpha=0.5, s=10)
+    xy_min = min(prediction_df["y_true"].min(), prediction_df["y_pred"].min())
+    xy_max = max(prediction_df["y_true"].max(), prediction_df["y_pred"].max())
+    ax.plot([xy_min, xy_max], [xy_min, xy_max], "--", color="black", linewidth=1)
+    ax.set_xlabel("LAI real")
+    ax.set_ylabel("LAI predicted")
+    ax.set_title(f"Test global scatter | {cfg['model_run_name']}")
+    fig.tight_layout()
+    fig.savefig(global_scatter_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -366,6 +379,7 @@ def save_evaluation_outputs(
         "pixel_metrics": pixel_metrics_path,
         "prediction_sample": prediction_sample_path,
         "global_hexbin": global_hexbin_path,
+        "global_scatter": global_scatter_path,
         "residual_hist": residual_hist_path,
         "best_worst_pixels": best_worst_pixels_path,
     }
