@@ -68,6 +68,8 @@ ANNUAL_AGGREGATION_RULES = {
     "T2M": "mean",
     "SSRD": "sum",
     "VPD": "mean",
+    "D2M": "mean",
+    "PEV": "mean",
     "LC_STATIC": "mean",
 
 }
