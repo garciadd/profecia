@@ -404,7 +404,7 @@ def log_evaluation_to_mlflow(mlflow_run_id: str | None, global_metrics: dict, pi
             if isinstance(value, (int, float)) and np.isfinite(value):
                 mlflow.log_metric(f"pixel_{name}", float(value))
         for path in paths.values():
-            if path.exists():
+            if path.exists() and path.suffix.lower() == ".png":
                 mlflow.log_artifact(str(path), artifact_path="evaluation")
 
 
