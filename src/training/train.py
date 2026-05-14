@@ -300,10 +300,10 @@ def train_tabular_model(
                     LOGGER.warning("mlflow.sklearn.log_model failed for model; trying joblib artifact fallback")
                     try:
                         # fallback: save joblib and log as artifact
-                        tmp_model = Path("/tmp") / f"model_{mlflow_run_id}.joblib"
-                        joblib.dump(model, tmp_model)
-                        mlflow.log_artifact(str(tmp_model))
-                        LOGGER.info("Logged model artifact via joblib fallback: %s", tmp_model)
+                        #tmp_model = Path("/tmp") / f"model_{mlflow_run_id}.joblib"
+                        #joblib.dump(model, tmp_model)
+                        #mlflow.log_artifact(str(tmp_model))
+                        LOGGER.info("SKIPPED: Logged model artifact via joblib fallback: %s", tmp_model)
                     except Exception:
                         LOGGER.exception("Failed to log model artifact to MLflow, including fallback")
 
@@ -314,10 +314,10 @@ def train_tabular_model(
                     except Exception:
                         LOGGER.warning("mlflow.sklearn.log_model failed for scaler; trying joblib artifact fallback")
                         try:
-                            tmp_scaler = Path("/tmp") / f"scaler_{mlflow_run_id}.joblib"
-                            joblib.dump(scaler, tmp_scaler)
-                            mlflow.log_artifact(str(tmp_scaler))
-                            LOGGER.info("Logged scaler artifact via joblib fallback: %s", tmp_scaler)
+                            #tmp_scaler = Path("/tmp") / f"scaler_{mlflow_run_id}.joblib"
+                            #joblib.dump(scaler, tmp_scaler)
+                            #mlflow.log_artifact(str(tmp_scaler))
+                            LOGGER.info("SKIPPED: Logged scaler artifact via joblib fallback: %s", tmp_scaler)
                         except Exception:
                             LOGGER.exception("Failed to log scaler artifact to MLflow, including fallback")
                 else:

@@ -25,6 +25,61 @@ RAW_DIR = Path("/mnt_sentinel_a/ferag/data/raw")
 OUTPUT_SUFFIX = "_lagged"
 
 
+def validate_lagged_output(
+    output_file: Path,
+    source_ds: xr.Dataset,
+    time_dim: str,
+) -> tuple[bool, str]:
+    """
+    Valida que el NetCDF generado conserve estructura y coordenadas del origen.
+    """
+    try:
+        with xr.open_dataset(output_file) as ds_out:
+            if set(ds_out.dims) != set(source_ds.dims):
+                return False, f"Dimensiones distintas: {set(ds_out.dims)} != {set(source_ds.dims)}"
+
+            for dim_name, dim_size in source_ds.sizes.items():
+                if ds_out.sizes.get(dim_name) != dim_size:
+                    return (
+                        False,
+                        f"Tamaño distinto en dimensión '{dim_name}': "
+                        f"{ds_out.sizes.get(dim_name)} != {dim_size}",
+                    )
+
+            if set(ds_out.data_vars) != set(source_ds.data_vars):
+                return False, f"Variables distintas: {set(ds_out.data_vars)} != {set(source_ds.data_vars)}"
+
+            for coord_name in source_ds.coords:
+                if coord_name not in ds_out.coords:
+                    return False, f"Falta coordenada '{coord_name}' en archivo generado"
+                if ds_out[coord_name].shape != source_ds[coord_name].shape:
+                    return (
+                        False,
+                        f"Shape distinto en coordenada '{coord_name}': "
+                        f"{ds_out[coord_name].shape} != {source_ds[coord_name].shape}",
+                    )
+
+            if time_dim not in ds_out.coords:
+                return False, f"Falta coordenada temporal '{time_dim}'"
+
+            time_index = ds_out.indexes.get(time_dim)
+            if time_index is None:
+                return False, f"No se pudo construir índice para '{time_dim}'"
+
+            time_dtype = getattr(time_index, "dtype", ds_out[time_dim].dtype)
+            if not np.issubdtype(np.dtype(time_dtype), np.datetime64):
+                return False, f"Coordenada '{time_dim}' no es datetime: {time_dtype}"
+
+            file_size = output_file.stat().st_size
+            if file_size < 1024:
+                return False, f"Archivo demasiado pequeño ({file_size} bytes)"
+
+    except Exception as e:
+        return False, f"Error validando archivo: {type(e).__name__}: {e}"
+
+    return True, "OK"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -172,15 +227,26 @@ def create_lagged_variables(nc_file: Path, lags: list[int] = [1, 2, 3]) -> dict[
         var_name_base = '_'.join(var_name_parts)
         
         output_file = nc_file.parent / f"{var_name_base}_lag{lag}_months_1982_2022_monthly_0.5deg.nc"
-        
+        temp_output_file = output_file.with_suffix(output_file.suffix + ".tmp")
+
         # Guardar
         try:
-            ds_lagged.to_netcdf(output_file, engine='netcdf4')
-            LOGGER.info(f"    ✓ Guardado: {output_file.name}")
+            if temp_output_file.exists():
+                temp_output_file.unlink()
+
+            ds_lagged.to_netcdf(temp_output_file, engine='netcdf4')
+            is_valid, validation_msg = validate_lagged_output(temp_output_file, ds, time_dim)
+            if not is_valid:
+                temp_output_file.unlink(missing_ok=True)
+                raise ValueError(f"Validación fallida para {output_file.name}: {validation_msg}")
+
+            temp_output_file.replace(output_file)
+            LOGGER.info(f"    ✓ Guardado y validado: {output_file.name}")
             results[lag] = output_file
         except Exception as e:
             LOGGER.error(f"    Error al guardar {output_file.name}: {e}")
-        
+            temp_output_file.unlink(missing_ok=True)
+
         ds_lagged.close()
     
     ds.close()
