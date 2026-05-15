@@ -11,7 +11,10 @@ build/
 dist/
 
 # Virtual environments
+.venv
 .venv/
+.venv_profecia
+.venv_profecia/
 
 # Local artifacts
 mlruns/
