@@ -26,6 +26,9 @@ FILE_MAP = {
     "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
     "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
     "TLU": "../annual/human/tlu_1982_2022_annual_0.5deg.nc",
+    "ELEVATION": "soil/elevation_1982_2022_monthly_0.5deg.nc",
+    "PH": "soil/ph_1982_2022_monthly_0.5deg.nc",
+    "RICHNESS": "soil/richness_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
@@ -63,6 +66,9 @@ ANNUAL_AGGREGATION_RULES = {
     "HFP": "mean",
     "NDEP": "mean",
     "TLU": "mean",
+    "ELEVATION": "mean",
+    "PH": "mean",
+    "RICHNESS": "mean",
     "LC_STATIC": "mean",
 
 }
@@ -318,6 +324,11 @@ def _validate_full_years(da: xr.DataArray) -> None:
         raise ValueError(f"Años incompletos: {incomplete.to_dict()}")
 
 
+def _has_single_value_per_year(da: xr.DataArray) -> bool:
+    counts = da["time"].dt.year.to_series().value_counts().sort_index()
+    return len(counts) > 0 and bool((counts == 1).all())
+
+
 def aggregate_time(
     da: xr.DataArray,
     variable_name: str,
@@ -336,6 +347,13 @@ def aggregate_time(
 
     if temporal_resolution != "annual":
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
+
+    if _has_single_value_per_year(da):
+        out = da.copy()
+        out.attrs = dict(da.attrs)
+        out.attrs["temporal_resolution"] = "annual"
+        out.attrs["annual_aggregation_rule"] = "identity"
+        return out
 
     if require_full_years:
         _validate_full_years(da)
