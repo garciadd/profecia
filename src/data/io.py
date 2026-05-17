@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from src.data import preprocess
+
 
 FILE_MAP = {
     "LAI": "lai_1982_2022_monthly_0.5deg.nc",
@@ -38,6 +40,8 @@ FILE_MAP = {
     "VPD_LAG_2": "vpd_lag2_months_1982_2022_monthly_0.5deg.nc",
     "VPD_LAG_3": "vpd_lag3_months_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
+    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
+    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
 }
 
 MASK_MAP = {
@@ -68,6 +72,8 @@ ANNUAL_AGGREGATION_RULES = {
     "T2M": "mean",
     "SSRD": "sum",
     "VPD": "mean",
+    "D2M": "mean",
+    "PEV": "sum",
     "LC_STATIC": "mean",
 
 }
@@ -393,6 +399,108 @@ def apply_filter_mask(da: xr.DataArray, filter_mask: xr.DataArray | None) -> xr.
     _validate_mask_alignment(da, filter_mask, "filter_mask")
     return da.where(filter_mask)
 
+
+def _dataarray_summary(da: xr.DataArray) -> dict[str, Any]:
+    return {
+        "shape": tuple(int(x) for x in da.shape),
+        "dims": tuple(str(x) for x in da.dims),
+        "dtype": str(da.dtype),
+    }
+
+
+def _coord_resolution(values: np.ndarray) -> float | None:
+    if len(values) < 2:
+        return None
+    diffs = np.diff(values.astype(float))
+    if not np.allclose(diffs, diffs[0]):
+        return None
+    return float(diffs[0])
+
+
+def _time_frequency(temporal_resolution: str) -> str:
+    temporal_resolution = temporal_resolution.lower().strip()
+    if temporal_resolution == "monthly":
+        return "MS"
+    if temporal_resolution == "annual":
+        return "YS"
+    raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
+
+
+def _grid_metadata(da: xr.DataArray) -> dict[str, Any]:
+    latitude = da["latitude"].values
+    longitude = da["longitude"].values
+    lat_resolution = _coord_resolution(latitude)
+    lon_resolution = _coord_resolution(longitude)
+    spatial_resolution = lat_resolution if lat_resolution is not None and np.isclose(lat_resolution, lon_resolution) else None
+    return {
+        "lat_min": float(latitude[0]),
+        "lat_max": float(latitude[-1]),
+        "lon_min": float(longitude[0]),
+        "lon_max": float(longitude[-1]),
+        "latitude_size": int(len(latitude)),
+        "longitude_size": int(len(longitude)),
+        "latitude_order": "ascending" if np.all(np.diff(latitude) > 0) else "unknown",
+        "longitude_order": "ascending" if np.all(np.diff(longitude) > 0) else "unknown",
+        "latitude_resolution_deg": lat_resolution,
+        "longitude_resolution_deg": lon_resolution,
+        "spatial_resolution_deg": spatial_resolution,
+    }
+
+
+def _temporal_metadata(da: xr.DataArray, temporal_resolution: str) -> dict[str, Any]:
+    return {
+        "time_min": str(pd.to_datetime(da["time"].values[0])) if da.sizes["time"] else None,
+        "time_max": str(pd.to_datetime(da["time"].values[-1])) if da.sizes["time"] else None,
+        "time_size": int(da.sizes["time"]),
+        "temporal_resolution": temporal_resolution.lower().strip(),
+        "frequency": _time_frequency(temporal_resolution),
+        "time_order": "ascending",
+    }
+
+
+def _product_metadata(path: Path | None, da: xr.DataArray) -> dict[str, Any]:
+    meta = {
+        "path": str(path) if path is not None else None,
+        **_dataarray_summary(da),
+    }
+    if "month" in da.dims:
+        meta["month_values"] = [int(x) for x in da["month"].values]
+    return meta
+
+
+def save_preprocess_products(
+    output_dir: str | Path,
+    variable_name: str,
+    products: dict[str, xr.DataArray | dict[str, xr.DataArray]],
+    save_output: bool = True,
+) -> dict[str, Any]:
+    product_dir = Path(output_dir) / "preprocess" / variable_name
+    saved: dict[str, Any] = {}
+
+    for product_name, product in products.items():
+        if isinstance(product, xr.DataArray):
+            path = save_npy(product_dir, product_name, product) if save_output else None
+            saved[product_name] = _product_metadata(path, product)
+            continue
+
+        if product_name == "trend":
+            slope = product["slope"]
+            time_years = product["time_years_centered"]
+            slope_path = save_npy(product_dir, "trend_slope", slope) if save_output else None
+            time_path = save_npy(product_dir, "trend_time_years_centered", time_years) if save_output else None
+            saved["trend"] = {
+                "storage": "slope_plus_centered_time",
+                "description": "Reconstruir tendencia eliminada como trend_slope * trend_time_years_centered.",
+                "slope": _product_metadata(slope_path, slope),
+                "time_years_centered": _product_metadata(time_path, time_years),
+            }
+            continue
+
+        saved[product_name] = {"path": None, "storage": "unsupported"}
+
+    return saved
+
+
 def _process_and_save_single_dataarray(
     da_raw,
     output_dir: str | Path,
@@ -403,6 +511,8 @@ def _process_and_save_single_dataarray(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     """Procesa una única DataArray 3D y devuelve metadata de salida + processing info."""
@@ -416,7 +526,20 @@ def _process_and_save_single_dataarray(
     )
 
     combined_mask, mask_info = build_combined_filter_mask(da_agg, masks if masks else None)
-    da_final = apply_filter_mask(da_agg, combined_mask)
+    da_masked = apply_filter_mask(da_agg, combined_mask)
+    preprocess_result = preprocess.apply_preprocessing(
+        da_masked,
+        temporal_resolution=temporal_resolution,
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
+    )
+    da_final = preprocess_result.data
+    preprocess_products = save_preprocess_products(
+        output_dir=output_dir,
+        variable_name=variable_name,
+        products=preprocess_result.products,
+        save_output=save_output,
+    )
 
     output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
 
@@ -429,18 +552,29 @@ def _process_and_save_single_dataarray(
                 "temporal_resolution": temporal_resolution,
                 "annual_rule": annual_rule,
                 "require_full_years": require_full_years,
+                **preprocess_result.metadata,
+                "preprocess_products": preprocess_products,
                 "mask_dir": str(mask_dir) if mask_dir is not None else None,
                 **mask_info,
             },
+            "grid": _grid_metadata(da_final),
+            "temporal_grid": _temporal_metadata(da_final, temporal_resolution),
+            "final_dims": tuple(str(x) for x in da_final.dims),
             "final_shape": tuple(int(x) for x in da_final.shape),
             "final_time_min": str(pd.to_datetime(da_final["time"].values[0])) if da_final.sizes["time"] else None,
             "final_time_max": str(pd.to_datetime(da_final["time"].values[-1])) if da_final.sizes["time"] else None,
             "final_units": da_final.attrs.get("units", ""),
             "final_dtype": str(da_final.dtype),
+            "reconstruction": {
+                "supported": bool(preprocess_result.metadata["preprocessing_applied"]),
+                "metadata_source": "metadata.json",
+                "order": preprocess_result.metadata["reconstruction_order"],
+                "products_root": str(Path(output_dir) / "preprocess" / variable_name),
+            },
         }
     }
 
-    del da_agg, da_final, combined_mask
+    del da_agg, da_masked, da_final, combined_mask, preprocess_result
     gc.collect()
 
     return result
@@ -455,6 +589,8 @@ def _process_and_save_multiclass_dataarray(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     """Procesa una DataArray con dimensión 'class' y guarda una salida por clase."""
@@ -481,6 +617,8 @@ def _process_and_save_multiclass_dataarray(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
 
@@ -505,6 +643,8 @@ def load_and_save_variable(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     da_raw, meta_load = load_netcdf(
@@ -540,6 +680,8 @@ def load_and_save_variable(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
     else:
@@ -553,6 +695,8 @@ def load_and_save_variable(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
 
@@ -568,6 +712,8 @@ def build_processed_metadata(
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
 ) -> dict:
     if temporal_resolution.lower() not in {"monthly", "annual"}:
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
@@ -581,6 +727,10 @@ def build_processed_metadata(
             "start_year": start_year,
             "end_year_inclusive": end_year_inclusive,
             "dtype": dtype,
+            **preprocess.validate_preprocess_options(
+                data_value_type=data_value_type,
+                detrend_theil_sen=detrend_theil_sen,
+            ),
         },
         "variables": {k.upper(): v for k, v in variable_results.items()},
     }
@@ -594,6 +744,8 @@ def save_processed_metadata(
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     filename: str = "metadata.json",
 ) -> Path:
     metadata = build_processed_metadata(
@@ -603,6 +755,8 @@ def save_processed_metadata(
         start_year=start_year,
         end_year_inclusive=end_year_inclusive,
         dtype=dtype,
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
     )
     return save_metadata_json(output_dir, metadata, filename)
 
@@ -614,7 +768,13 @@ def build_processed_run_config(
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
     roi: ROI | None = None,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
 ) -> dict:
+    options = preprocess.validate_preprocess_options(
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
+    )
     return {
         "variable_names": [str(v).upper() for v in variable_names],
         "temporal_resolution": temporal_resolution.lower().strip(),
@@ -623,6 +783,7 @@ def build_processed_run_config(
         "end_year_inclusive": end_year_inclusive,
         "dtype": str(dtype),
         "roi": _to_jsonable(roi),
+        **options,
     }
 
 

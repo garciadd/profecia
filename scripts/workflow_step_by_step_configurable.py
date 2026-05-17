@@ -119,6 +119,8 @@ def preprocess_variables(cfg: dict) -> Path:
         end_year_inclusive=data_cfg["end_year_inclusive"],
         dtype=data_cfg["dtype"],
         roi=data_cfg["roi"],
+        data_value_type=data_cfg["data_value_type"],
+        detrend_theil_sen=data_cfg["detrend_theil_sen"],
     )
     status = io.processed_run_status(
         output_dir=output_dir,
@@ -148,6 +150,8 @@ def preprocess_variables(cfg: dict) -> Path:
                 end_year_inclusive=data_cfg["end_year_inclusive"],
                 dtype=data_cfg["dtype"],
                 temporal_resolution=data_cfg["temporal_resolution"],
+                data_value_type=data_cfg["data_value_type"],
+                detrend_theil_sen=data_cfg["detrend_theil_sen"],
                 save_output=True,
             )
         )
@@ -160,6 +164,8 @@ def preprocess_variables(cfg: dict) -> Path:
         start_year=data_cfg["start_year"],
         end_year_inclusive=data_cfg["end_year_inclusive"],
         dtype=data_cfg["dtype"],
+        data_value_type=data_cfg["data_value_type"],
+        detrend_theil_sen=data_cfg["detrend_theil_sen"],
     )
     io.save_metadata_json(output_dir, expected_run_config, filename="run_config.json")
     LOGGER.info("Preprocessed data saved in %s", output_dir)
