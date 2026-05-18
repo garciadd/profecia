@@ -66,13 +66,6 @@ ANNUAL_AGGREGATION_RULES = {
     "VPD": "mean",
     "D2M": "mean",
     "PEV": "sum",
-    "CO2": "mean",
-    "HFP": "mean",
-    "NDEP": "mean",
-    "TLU": "mean",
-    "ELEVATION": "mean",
-    "PH": "mean",
-    "RICHNESS": "mean",
     "LC_STATIC": "mean",
 }
 
@@ -637,12 +630,6 @@ def _process_and_save_single_dataarray(
         products=preprocess_result.products,
         save_output=save_output,
     )
-
-    load_meta_out = dict(meta_load)
-    load_meta_out["lag_applied"] = bool(lag_steps > 0)
-    load_meta_out["lag_apply_stage"] = lag_apply_stage
-    if lag_steps > 0:
-        load_meta_out["lag_temporal_unit"] = "months" if temporal_resolution == "monthly" else "years"
 
     output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
 
