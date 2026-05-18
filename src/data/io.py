@@ -1,6 +1,7 @@
 
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import gc
@@ -10,34 +11,29 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from src.data import preprocess
+
 
 FILE_MAP = {
     "LAI": "lai_1982_2022_monthly_0.5deg.nc",
     "SM1": "swvl1_1982_2022_monthly_0.5deg.nc",
-    "SM1_LAG_1": "swvl1_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "SM1_LAG_2": "swvl1_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "SM1_LAG_3": "swvl1_lag3_months_1982_2022_monthly_0.5deg.nc",
     "SM2": "subswc_1982_2022_monthly_0.5deg.nc",
-    "SM2_LAG_1": "subswc_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "SM2_LAG_2": "subswc_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "SM2_LAG_3": "subswc_lag3_months_1982_2022_monthly_0.5deg.nc",
     "TP": "tp_1982_2022_monthly_0.5deg.nc",
-    "TP_LAG_1": "tp_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "TP_LAG_2": "tp_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "TP_LAG_3": "tp_lag3_months_1982_2022_monthly_0.5deg.nc",
     "T2M": "t2m_1982_2022_monthly_0.5deg.nc",
-    "T2M_LAG_1": "t2m_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "T2M_LAG_2": "t2m_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "T2M_LAG_3": "t2m_lag3_months_1982_2022_monthly_0.5deg.nc",
     "SSRD": "ssrd_1982_2022_monthly_0.5deg.nc",
-    "SSRD_LAG_1": "ssrd_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "SSRD_LAG_2": "ssrd_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "SSRD_LAG_3": "ssrd_lag3_months_1982_2022_monthly_0.5deg.nc",
     "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
-    "VPD_LAG_1": "vpd_lag1_months_1982_2022_monthly_0.5deg.nc",
-    "VPD_LAG_2": "vpd_lag2_months_1982_2022_monthly_0.5deg.nc",
-    "VPD_LAG_3": "vpd_lag3_months_1982_2022_monthly_0.5deg.nc",
+    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
+    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
+    "CO2": "../annual/human/co2_1982_2022_annual_0.5deg.nc",
+    "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
+    "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
+    "TLU": "../annual/human/tlu_1982_2022_annual_0.5deg.nc",
+    "ELEVATION": "soil/elevation_1982_2022_monthly_0.5deg.nc",
+    "PH": "soil/ph_1982_2022_monthly_0.5deg.nc",
+    "RICHNESS": "soil/richness_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
+    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
+    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
 }
 
 MASK_MAP = {
@@ -68,12 +64,21 @@ ANNUAL_AGGREGATION_RULES = {
     "T2M": "mean",
     "SSRD": "sum",
     "VPD": "mean",
+    "D2M": "mean",
+    "PEV": "sum",
+    "CO2": "mean",
+    "HFP": "mean",
+    "NDEP": "mean",
+    "TLU": "mean",
+    "ELEVATION": "mean",
+    "PH": "mean",
+    "RICHNESS": "mean",
     "LC_STATIC": "mean",
-
 }
 
 CLIMATE_VALID_CODES = {1, 2, 3, 4, 5}
 LANDCOVER_VALID_CODES = {10, 20, 30, 40, 70, 90, 100}
+LAGGED_VARIABLE_PATTERN = re.compile(r"^(?P<base>[A-Z0-9_]+)_LAG_(?P<lag>\d+)$")
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,29 @@ class ROI:
     lat_max: float
     lon_min: float
     lon_max: float
+
+
+def _parse_variable_request(variable: str) -> dict[str, Any]:
+    variable = variable.upper().strip()
+    match = LAGGED_VARIABLE_PATTERN.fullmatch(variable)
+    if not match:
+        return {
+            "requested_name": variable,
+            "base_name": variable,
+            "lag_steps": 0,
+            "is_lagged": False,
+        }
+
+    lag_steps = int(match.group("lag"))
+    if lag_steps <= 0:
+        raise ValueError("El sufijo _LAG_N requiere N >= 1.")
+
+    return {
+        "requested_name": variable,
+        "base_name": match.group("base"),
+        "lag_steps": lag_steps,
+        "is_lagged": True,
+    }
 
 
 def _get_path(base_dir: str | Path, name: str, file_map: dict[str, str]) -> Path:
@@ -213,6 +241,33 @@ def _select_roi(da: xr.DataArray, roi: ROI | None) -> xr.DataArray:
     return out
 
 
+def _apply_lagged_shift(
+    da: xr.DataArray,
+    lag_steps: int,
+    temporal_resolution: str,
+) -> xr.DataArray:
+    if lag_steps < 0:
+        raise ValueError("lag_steps debe ser >= 0.")
+    if lag_steps == 0:
+        return da
+
+    shifted = da.shift(time=lag_steps)
+    shifted.attrs = dict(da.attrs)
+
+    temporal_resolution = temporal_resolution.lower().strip()
+    if temporal_resolution == "monthly":
+        lag_unit = "months"
+    elif temporal_resolution == "annual":
+        lag_unit = "years"
+    else:
+        raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
+
+    shifted.attrs["lag_steps"] = lag_steps
+    shifted.attrs["lag_temporal_unit"] = lag_unit
+    shifted.attrs["lag_note"] = f"Shifted by {lag_steps} {lag_unit}; first {lag_steps} steps are NaN."
+    return shifted
+
+
 def load_netcdf(
     base_dir: str | Path,
     variable: str,
@@ -221,8 +276,10 @@ def load_netcdf(
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
 ) -> tuple[xr.DataArray, dict]:
-    variable = variable.upper()
-    path = _get_path(base_dir, variable.lower(), {k.lower(): v for k, v in FILE_MAP.items()})
+    variable_info = _parse_variable_request(variable)
+    variable = variable_info["requested_name"]
+    base_variable = variable_info["base_name"]
+    path = _get_path(base_dir, base_variable.lower(), {k.lower(): v for k, v in FILE_MAP.items()})
 
     ds = xr.open_dataset(path)
     ds = _standardize_dataset(ds)
@@ -239,9 +296,15 @@ def load_netcdf(
 
     meta = {
         "variable_requested": variable,
+        "variable_base": base_variable,
         "variable_in_file": var_name,
         "filename": path.name,
         "path": str(path),
+        "is_lagged": variable_info["is_lagged"],
+        "lag_steps": variable_info["lag_steps"],
+        "lag_applied": False,
+        "lag_apply_stage": None,
+        "lag_temporal_unit": None,
         "shape_loaded": tuple(int(x) for x in da.shape),
         "dtype": str(da.dtype),
         "units": da.attrs.get("units", ""),
@@ -264,6 +327,11 @@ def _validate_full_years(da: xr.DataArray) -> None:
         raise ValueError(f"Años incompletos: {incomplete.to_dict()}")
 
 
+def _has_single_value_per_year(da: xr.DataArray) -> bool:
+    counts = da["time"].dt.year.to_series().value_counts().sort_index()
+    return len(counts) > 0 and bool((counts == 1).all())
+
+
 def aggregate_time(
     da: xr.DataArray,
     variable_name: str,
@@ -282,6 +350,13 @@ def aggregate_time(
 
     if temporal_resolution != "annual":
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
+
+    if _has_single_value_per_year(da):
+        out = da.copy()
+        out.attrs = dict(da.attrs)
+        out.attrs["temporal_resolution"] = "annual"
+        out.attrs["annual_aggregation_rule"] = "identity"
+        return out
 
     if require_full_years:
         _validate_full_years(da)
@@ -393,6 +468,108 @@ def apply_filter_mask(da: xr.DataArray, filter_mask: xr.DataArray | None) -> xr.
     _validate_mask_alignment(da, filter_mask, "filter_mask")
     return da.where(filter_mask)
 
+
+def _dataarray_summary(da: xr.DataArray) -> dict[str, Any]:
+    return {
+        "shape": tuple(int(x) for x in da.shape),
+        "dims": tuple(str(x) for x in da.dims),
+        "dtype": str(da.dtype),
+    }
+
+
+def _coord_resolution(values: np.ndarray) -> float | None:
+    if len(values) < 2:
+        return None
+    diffs = np.diff(values.astype(float))
+    if not np.allclose(diffs, diffs[0]):
+        return None
+    return float(diffs[0])
+
+
+def _time_frequency(temporal_resolution: str) -> str:
+    temporal_resolution = temporal_resolution.lower().strip()
+    if temporal_resolution == "monthly":
+        return "MS"
+    if temporal_resolution == "annual":
+        return "YS"
+    raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
+
+
+def _grid_metadata(da: xr.DataArray) -> dict[str, Any]:
+    latitude = da["latitude"].values
+    longitude = da["longitude"].values
+    lat_resolution = _coord_resolution(latitude)
+    lon_resolution = _coord_resolution(longitude)
+    spatial_resolution = lat_resolution if lat_resolution is not None and np.isclose(lat_resolution, lon_resolution) else None
+    return {
+        "lat_min": float(latitude[0]),
+        "lat_max": float(latitude[-1]),
+        "lon_min": float(longitude[0]),
+        "lon_max": float(longitude[-1]),
+        "latitude_size": int(len(latitude)),
+        "longitude_size": int(len(longitude)),
+        "latitude_order": "ascending" if np.all(np.diff(latitude) > 0) else "unknown",
+        "longitude_order": "ascending" if np.all(np.diff(longitude) > 0) else "unknown",
+        "latitude_resolution_deg": lat_resolution,
+        "longitude_resolution_deg": lon_resolution,
+        "spatial_resolution_deg": spatial_resolution,
+    }
+
+
+def _temporal_metadata(da: xr.DataArray, temporal_resolution: str) -> dict[str, Any]:
+    return {
+        "time_min": str(pd.to_datetime(da["time"].values[0])) if da.sizes["time"] else None,
+        "time_max": str(pd.to_datetime(da["time"].values[-1])) if da.sizes["time"] else None,
+        "time_size": int(da.sizes["time"]),
+        "temporal_resolution": temporal_resolution.lower().strip(),
+        "frequency": _time_frequency(temporal_resolution),
+        "time_order": "ascending",
+    }
+
+
+def _product_metadata(path: Path | None, da: xr.DataArray) -> dict[str, Any]:
+    meta = {
+        "path": str(path) if path is not None else None,
+        **_dataarray_summary(da),
+    }
+    if "month" in da.dims:
+        meta["month_values"] = [int(x) for x in da["month"].values]
+    return meta
+
+
+def save_preprocess_products(
+    output_dir: str | Path,
+    variable_name: str,
+    products: dict[str, xr.DataArray | dict[str, xr.DataArray]],
+    save_output: bool = True,
+) -> dict[str, Any]:
+    product_dir = Path(output_dir) / "preprocess" / variable_name
+    saved: dict[str, Any] = {}
+
+    for product_name, product in products.items():
+        if isinstance(product, xr.DataArray):
+            path = save_npy(product_dir, product_name, product) if save_output else None
+            saved[product_name] = _product_metadata(path, product)
+            continue
+
+        if product_name == "trend":
+            slope = product["slope"]
+            time_years = product["time_years_centered"]
+            slope_path = save_npy(product_dir, "trend_slope", slope) if save_output else None
+            time_path = save_npy(product_dir, "trend_time_years_centered", time_years) if save_output else None
+            saved["trend"] = {
+                "storage": "slope_plus_centered_time",
+                "description": "Reconstruir tendencia eliminada como trend_slope * trend_time_years_centered.",
+                "slope": _product_metadata(slope_path, slope),
+                "time_years_centered": _product_metadata(time_path, time_years),
+            }
+            continue
+
+        saved[product_name] = {"path": None, "storage": "unsupported"}
+
+    return saved
+
+
 def _process_and_save_single_dataarray(
     da_raw,
     output_dir: str | Path,
@@ -403,20 +580,69 @@ def _process_and_save_single_dataarray(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     """Procesa una única DataArray 3D y devuelve metadata de salida + processing info."""
+    variable_info = {
+        "requested_name": str(meta_load.get("variable_requested", variable_name)).upper(),
+        "base_name": str(meta_load.get("variable_base", variable_name)).upper(),
+        "lag_steps": int(meta_load.get("lag_steps", 0)),
+        "is_lagged": bool(meta_load.get("is_lagged", False)),
+    }
+    lag_steps = variable_info["lag_steps"]
+    temporal_resolution = temporal_resolution.lower().strip()
+
+    if temporal_resolution == "monthly":
+        da_for_aggregation = _apply_lagged_shift(
+            da_raw,
+            lag_steps=lag_steps,
+            temporal_resolution=temporal_resolution,
+        )
+        lag_apply_stage = "pre_aggregation" if lag_steps > 0 else None
+    elif temporal_resolution == "annual":
+        da_for_aggregation = da_raw
+        lag_apply_stage = "post_aggregation" if lag_steps > 0 else None
+    else:
+        raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
 
     da_agg = aggregate_time(
-        da=da_raw,
+        da=da_for_aggregation,
         variable_name=variable_name,
         temporal_resolution=temporal_resolution,
         annual_rule=annual_rule,
         require_full_years=require_full_years,
     )
 
+    if temporal_resolution == "annual" and lag_steps > 0:
+        da_agg = _apply_lagged_shift(
+            da_agg,
+            lag_steps=lag_steps,
+            temporal_resolution=temporal_resolution,
+        )
+
     combined_mask, mask_info = build_combined_filter_mask(da_agg, masks if masks else None)
-    da_final = apply_filter_mask(da_agg, combined_mask)
+    da_masked = apply_filter_mask(da_agg, combined_mask)
+    preprocess_result = preprocess.apply_preprocessing(
+        da_masked,
+        temporal_resolution=temporal_resolution,
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
+    )
+    da_final = preprocess_result.data
+    preprocess_products = save_preprocess_products(
+        output_dir=output_dir,
+        variable_name=variable_name,
+        products=preprocess_result.products,
+        save_output=save_output,
+    )
+
+    load_meta_out = dict(meta_load)
+    load_meta_out["lag_applied"] = bool(lag_steps > 0)
+    load_meta_out["lag_apply_stage"] = lag_apply_stage
+    if lag_steps > 0:
+        load_meta_out["lag_temporal_unit"] = "months" if temporal_resolution == "monthly" else "years"
 
     output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
 
@@ -424,23 +650,38 @@ def _process_and_save_single_dataarray(
         variable_name: {
             "logical_name": variable_name,
             "array_path": str(output_path) if output_path is not None else None,
-            "load_metadata": meta_load,
+            "load_metadata": load_meta_out,
             "processing": {
                 "temporal_resolution": temporal_resolution,
                 "annual_rule": annual_rule,
                 "require_full_years": require_full_years,
+                **preprocess_result.metadata,
+                "preprocess_products": preprocess_products,
                 "mask_dir": str(mask_dir) if mask_dir is not None else None,
+                "is_lagged": variable_info["is_lagged"],
+                "lag_steps": lag_steps,
+                "lag_apply_stage": lag_apply_stage,
+                "lag_temporal_unit": load_meta_out["lag_temporal_unit"],
                 **mask_info,
             },
+            "grid": _grid_metadata(da_final),
+            "temporal_grid": _temporal_metadata(da_final, temporal_resolution),
+            "final_dims": tuple(str(x) for x in da_final.dims),
             "final_shape": tuple(int(x) for x in da_final.shape),
             "final_time_min": str(pd.to_datetime(da_final["time"].values[0])) if da_final.sizes["time"] else None,
             "final_time_max": str(pd.to_datetime(da_final["time"].values[-1])) if da_final.sizes["time"] else None,
             "final_units": da_final.attrs.get("units", ""),
             "final_dtype": str(da_final.dtype),
+            "reconstruction": {
+                "supported": bool(preprocess_result.metadata["preprocessing_applied"]),
+                "metadata_source": "metadata.json",
+                "order": preprocess_result.metadata["reconstruction_order"],
+                "products_root": str(Path(output_dir) / "preprocess" / variable_name),
+            },
         }
     }
 
-    del da_agg, da_final, combined_mask
+    del da_agg, da_masked, da_final, combined_mask, preprocess_result
     gc.collect()
 
     return result
@@ -455,6 +696,8 @@ def _process_and_save_multiclass_dataarray(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     """Procesa una DataArray con dimensión 'class' y guarda una salida por clase."""
@@ -481,6 +724,8 @@ def _process_and_save_multiclass_dataarray(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
 
@@ -505,6 +750,8 @@ def load_and_save_variable(
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
     da_raw, meta_load = load_netcdf(
@@ -540,6 +787,8 @@ def load_and_save_variable(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
     else:
@@ -553,6 +802,8 @@ def load_and_save_variable(
             temporal_resolution=temporal_resolution,
             annual_rule=annual_rule,
             require_full_years=require_full_years,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
             save_output=save_output,
         )
 
@@ -568,6 +819,8 @@ def build_processed_metadata(
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
 ) -> dict:
     if temporal_resolution.lower() not in {"monthly", "annual"}:
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
@@ -581,6 +834,10 @@ def build_processed_metadata(
             "start_year": start_year,
             "end_year_inclusive": end_year_inclusive,
             "dtype": dtype,
+            **preprocess.validate_preprocess_options(
+                data_value_type=data_value_type,
+                detrend_theil_sen=detrend_theil_sen,
+            ),
         },
         "variables": {k.upper(): v for k, v in variable_results.items()},
     }
@@ -594,6 +851,8 @@ def save_processed_metadata(
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
     filename: str = "metadata.json",
 ) -> Path:
     metadata = build_processed_metadata(
@@ -603,6 +862,8 @@ def save_processed_metadata(
         start_year=start_year,
         end_year_inclusive=end_year_inclusive,
         dtype=dtype,
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
     )
     return save_metadata_json(output_dir, metadata, filename)
 
@@ -614,7 +875,13 @@ def build_processed_run_config(
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
     roi: ROI | None = None,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
 ) -> dict:
+    options = preprocess.validate_preprocess_options(
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
+    )
     return {
         "variable_names": [str(v).upper() for v in variable_names],
         "temporal_resolution": temporal_resolution.lower().strip(),
@@ -623,6 +890,7 @@ def build_processed_run_config(
         "end_year_inclusive": end_year_inclusive,
         "dtype": str(dtype),
         "roi": _to_jsonable(roi),
+        **options,
     }
 
 
@@ -645,11 +913,19 @@ def processed_run_status(
     run_config_filename: str = "run_config.json",
 ) -> dict[str, Any]:
     output_dir = Path(output_dir)
-    expected_files = [output_dir / f"{str(v).upper()}.npy" for v in variable_names]
+    variable_outputs: dict[str, list[Path]] = {}
+    for variable in variable_names:
+        variable_name = str(variable).upper()
+        exact_path = output_dir / f"{variable_name}.npy"
+        if exact_path.exists():
+            variable_outputs[variable_name] = [exact_path]
+        else:
+            variable_outputs[variable_name] = sorted(output_dir.glob(f"{variable_name}_*.npy"))
+
     metadata_path = output_dir / metadata_filename
     run_config_path = output_dir / run_config_filename
 
-    files_present = all(path.exists() for path in expected_files)
+    files_present = all(bool(paths) for paths in variable_outputs.values())
     metadata_present = metadata_path.exists()
     run_config_present = run_config_path.exists()
     complete = output_dir.exists() and files_present and metadata_present and run_config_present
@@ -666,7 +942,15 @@ def processed_run_status(
         "run_config_present": bool(run_config_present),
         "config_matches": bool(config_matches),
         "saved_config": saved_config,
-        "missing_files": [str(path) for path in expected_files if not path.exists()],
+        "missing_files": [
+            str(output_dir / f"{variable_name}.npy")
+            for variable_name, paths in variable_outputs.items()
+            if not paths
+        ],
+        "variable_outputs": {
+            variable_name: [str(path) for path in paths]
+            for variable_name, paths in variable_outputs.items()
+        },
         "metadata_path": str(metadata_path),
         "run_config_path": str(run_config_path),
     }

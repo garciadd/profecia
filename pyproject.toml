@@ -10,6 +10,24 @@ authors = [
     {name = "garciad"}
 ]
 requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "xarray",
+    "netcdf4",
+    "h5netcdf",
+    "dask",
+    "matplotlib",
+    "scipy",
+    "statsmodels",
+    "scikit-learn",
+    "jupyter",
+    "notebook",
+    "ipykernel",
+    "mlflow",
+    "shap",
+    "seaborn"
+    ]
 
 [tool.setuptools.packages.find]
 where = ["."]

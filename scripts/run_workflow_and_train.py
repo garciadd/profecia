@@ -69,13 +69,13 @@ STOP_ON_ERROR = True
 # Configuración editable de MLflow
 # ---------------------------------------------------------------------------
 #
-# Edita estos valores directamente aquí. El script los exporta a variables de
-# entorno para que MLflow las use durante la ejecución.
+# Define MLFLOW_TRACKING_USERNAME y MLFLOW_TRACKING_PASSWORD en el entorno.
+# El script no guarda credenciales en archivos versionados.
 #
 # Si algún valor se deja como cadena vacía, no se exporta.
-MLFLOW_TRACKING_URI = "https://mlflow.cloud.ai4eosc.eu/"
-MLFLOW_TRACKING_USERNAME = "aguilarf@ifca.unican.es"
-MLFLOW_TRACKING_PASSWORD = "saintGenis@17"
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "https://mlflow.cloud.ai4eosc.eu/")
+MLFLOW_TRACKING_USERNAME = os.getenv("MLFLOW_TRACKING_USERNAME", "")
+MLFLOW_TRACKING_PASSWORD = os.getenv("MLFLOW_TRACKING_PASSWORD", "")
 
 
 def export_mlflow_environment() -> None:

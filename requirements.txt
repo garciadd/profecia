@@ -13,3 +13,4 @@ notebook
 ipykernel
 mlflow
 shap
+tomli

@@ -1,23 +1,25 @@
 [project]
 main_dir = "/mnt_sentinel_a/ferag/data" 
-raw_dir = "/mnt_sentinel_a/ferag/data/raw"
-processed_base_dir = "/mnt_sentinel_a/ferag/data/processed"
-# mask_dir = "/mnt_sentinel_a/ferag/data/masks"
+raw_dir = "/srv/read_only_data/final_datasets/monthly/"
+processed_base_dir = "/home/ubuntu/data/processed"
+mask_dir = "/srv/read_only_data/final_datasets/masks"
 
 [data]
-temporal_resolution = "monthly" # "monthly" o "annual"
-mask_names = ["land"] # ["land"]
+temporal_resolution = "annual"
+data_value_type = "real" # "real" o "anomaly"
+detrend_theil_sen = false
+mask_names = ["land", "ebf", "bs"]
 start_year = 1982
 end_year_inclusive = 2022
 dtype = "float32"
-variable_names = ['LAI', 'SM1', 'SM2',  'TP']
+variable_names = ['LAI', "RICHNESS", "ELEVATION", "PH", 'CO2', "HFP", "NDEP", "TLU", 'SM1', 'SM1_LAG_1', 'SM2', 'SM2_LAG_1', 'TP', 'TP_LAG_1', 'T2M', 'T2M_LAG_1', 'SSRD','VPD', 'D2M',  'PEV', 'SSRD_LAG_1','VPD_LAG_1', 'D2M_LAG_1',  'PEV_LAG_1',  'LC_STATIC']
 target_name = "LAI"
 
 # roi = { lat_min = -60.0, lat_max = 80.0, lon_min = -180.0, lon_max = 180.0 }
-# Si no se define, se usa todo el globo disponible.
+
 [mlflow]
 enabled = true
-tracking_uri="https://mlflow.cloud.ai4eosc.eu/"
-tracking_username="aguilarf@ifca.unican.es"
-tracking_password=""
-experiment_name="land_without_lag"
+tracking_uri = "https://mlflow.cloud.ai4eosc.eu/"
+tracking_username = ""
+tracking_password = ""
+experiment_name = "annual_1982_2022_rf_with_human_some_soil_and_few_lag"

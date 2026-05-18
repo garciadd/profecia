@@ -43,11 +43,28 @@ def _fraction_tag(value: float) -> str:
     return str(pct).replace(".", "p")
 
 
-def build_processed_run_name(mask_names: list[str], temporal_resolution: str) -> str:
+def _normalize_data_value_type(data_value_type: str) -> str:
+    data_value_type = data_value_type.lower().strip()
+    if data_value_type not in {"real", "anomaly"}:
+        raise ValueError("data.data_value_type debe ser 'real' o 'anomaly'.")
+    return data_value_type
+
+
+def build_processed_run_name(
+    mask_names: list[str],
+    temporal_resolution: str,
+    data_value_type: str = "real",
+    detrend_theil_sen: bool = False,
+) -> str:
     tokens = _normalize_mask_names(mask_names)
     if not tokens:
         tokens = ["nomask"]
     tokens.append(temporal_resolution.lower().strip())
+    data_value_type = _normalize_data_value_type(data_value_type)
+    if data_value_type != "real":
+        tokens.append(data_value_type)
+    if detrend_theil_sen:
+        tokens.append("theilsen")
     return "_".join(tokens)
 
 
@@ -70,6 +87,8 @@ def resolve_data_config(config_path: str | Path = "config/data.toml") -> dict:
     processed_base_dir = _resolve_project_path(project_raw, "processed_base_dir", main_dir / "processed")
     mask_dir = _resolve_project_path(project_raw, "mask_dir", main_dir / "masks")
     temporal_resolution = raw["data"]["temporal_resolution"].lower().strip()
+    data_value_type = _normalize_data_value_type(raw["data"].get("data_value_type", "real"))
+    detrend_theil_sen = bool(raw["data"].get("detrend_theil_sen", False))
     mask_names = _normalize_mask_names(raw["data"].get("mask_names", []))
     variable_names = _normalize_variable_names(raw["data"]["variable_names"])
     target_name = str(raw["data"]["target_name"]).upper().strip()
@@ -91,13 +110,20 @@ def resolve_data_config(config_path: str | Path = "config/data.toml") -> dict:
         "target_name": target_name,
         "predictor_names": predictor_names,
         "temporal_resolution": temporal_resolution,
+        "data_value_type": data_value_type,
+        "detrend_theil_sen": detrend_theil_sen,
         "mask_names": mask_names,
         "start_year": int(raw["data"]["start_year"]),
         "end_year_inclusive": int(raw["data"]["end_year_inclusive"]),
         "dtype": raw["data"].get("dtype", "float32"),
         "roi": raw["data"].get("roi"),
         "mlflow": _resolve_mlflow_config(raw),
-        "run_name": build_processed_run_name(mask_names, temporal_resolution),
+        "run_name": build_processed_run_name(
+            mask_names,
+            temporal_resolution,
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
+        ),
     }
     cfg["output_dir"] = cfg["processed_base_dir"] / cfg["run_name"]
     return cfg

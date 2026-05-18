@@ -119,6 +119,8 @@ def preprocess_variables(cfg: dict) -> Path:
         end_year_inclusive=data_cfg["end_year_inclusive"],
         dtype=data_cfg["dtype"],
         roi=data_cfg["roi"],
+        data_value_type=data_cfg["data_value_type"],
+        detrend_theil_sen=data_cfg["detrend_theil_sen"],
     )
     status = io.processed_run_status(
         output_dir=output_dir,
@@ -148,6 +150,8 @@ def preprocess_variables(cfg: dict) -> Path:
                 end_year_inclusive=data_cfg["end_year_inclusive"],
                 dtype=data_cfg["dtype"],
                 temporal_resolution=data_cfg["temporal_resolution"],
+                data_value_type=data_cfg["data_value_type"],
+                detrend_theil_sen=data_cfg["detrend_theil_sen"],
                 save_output=True,
             )
         )
@@ -160,6 +164,8 @@ def preprocess_variables(cfg: dict) -> Path:
         start_year=data_cfg["start_year"],
         end_year_inclusive=data_cfg["end_year_inclusive"],
         dtype=data_cfg["dtype"],
+        data_value_type=data_cfg["data_value_type"],
+        detrend_theil_sen=data_cfg["detrend_theil_sen"],
     )
     io.save_metadata_json(output_dir, expected_run_config, filename="run_config.json")
     LOGGER.info("Preprocessed data saved in %s", output_dir)
@@ -311,6 +317,7 @@ def save_evaluation_outputs(
     prediction_df.head(20_000).to_csv(prediction_sample_path, index=False)
 
     global_hexbin_path = out_dir / "hexbin_global.png"
+    global_scatter_path = out_dir / "scatter_global.png"
     residual_hist_path = out_dir / "residual_hist.png"
     best_worst_pixels_path = out_dir / "best_worst_pixels_hexbin.png"
 
@@ -325,6 +332,18 @@ def save_evaluation_outputs(
     fig.colorbar(hb, ax=ax, label="Samples")
     fig.tight_layout()
     fig.savefig(global_hexbin_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.scatter(prediction_df["y_true"], prediction_df["y_pred"], alpha=0.5, s=10)
+    xy_min = min(prediction_df["y_true"].min(), prediction_df["y_pred"].min())
+    xy_max = max(prediction_df["y_true"].max(), prediction_df["y_pred"].max())
+    ax.plot([xy_min, xy_max], [xy_min, xy_max], "--", color="black", linewidth=1)
+    ax.set_xlabel("LAI real")
+    ax.set_ylabel("LAI predicted")
+    ax.set_title(f"Test global scatter | {cfg['model_run_name']}")
+    fig.tight_layout()
+    fig.savefig(global_scatter_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -366,6 +385,7 @@ def save_evaluation_outputs(
         "pixel_metrics": pixel_metrics_path,
         "prediction_sample": prediction_sample_path,
         "global_hexbin": global_hexbin_path,
+        "global_scatter": global_scatter_path,
         "residual_hist": residual_hist_path,
         "best_worst_pixels": best_worst_pixels_path,
     }
@@ -390,7 +410,7 @@ def log_evaluation_to_mlflow(mlflow_run_id: str | None, global_metrics: dict, pi
             if isinstance(value, (int, float)) and np.isfinite(value):
                 mlflow.log_metric(f"pixel_{name}", float(value))
         for path in paths.values():
-            if path.exists():
+            if path.exists() and path.suffix.lower() == ".png":
                 mlflow.log_artifact(str(path), artifact_path="evaluation")
 
 
