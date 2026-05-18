@@ -29,6 +29,12 @@ FILE_MAP = {
     "ELEVATION": "soil/elevation_1982_2022_monthly_0.5deg.nc",
     "PH": "soil/ph_1982_2022_monthly_0.5deg.nc",
     "RICHNESS": "soil/richness_1982_2022_monthly_0.5deg.nc",
+    "BULK": "soil/bulk_density_1982_2022_monthly_0.5deg.nc",
+    "CEC": "soil/cec_1982_2022_monthly_0.5deg.nc",
+    "CLAY": "soil/clay_fraction_1982_2022_monthly_0.5deg.nc",
+    "SAND": "soil/sand_fraction_1982_2022_monthly_0.5deg.nc",
+    "SILT": "soil/silt_fraction_1982_2022_monthly_0.5deg.nc",
+    "SOC": "soil/soc_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
@@ -69,6 +75,12 @@ ANNUAL_AGGREGATION_RULES = {
     "ELEVATION": "mean",
     "PH": "mean",
     "RICHNESS": "mean",
+    "BULK": "mean",
+    "CEC": "mean",
+    "CLAY": "mean",
+    "SAND": "mean",
+    "SILT": "mean",
+    "SOC": "mean",
     "LC_STATIC": "mean",
 
 }
