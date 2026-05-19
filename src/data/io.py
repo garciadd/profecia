@@ -23,7 +23,7 @@ FILE_MAP = {
     "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
     "PEV": "pev_1982_2022_monthly_0.5deg.nc",
     "WIND": "wind_1982_2022_monthly_0.5deg.nc",
-    "SPEI": "spei06_1982_2022_monthly_0.5deg.nc",
+    "SPEI": "spei06_univariable_1982_2022_monthly_0.5deg.nc",
     "CO2": "../annual/human/co2_1982_2022_annual_0.5deg.nc",
     "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
     "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
