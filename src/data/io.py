@@ -86,6 +86,7 @@ ANNUAL_AGGREGATION_RULES = {
     "SAND": "mean",
     "SILT": "mean",
     "SOC": "mean",
+    "TOTAL_N": "mean",
     "LC_STATIC": "mean",
 
 }
