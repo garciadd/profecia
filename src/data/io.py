@@ -22,6 +22,8 @@ FILE_MAP = {
     "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
     "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
     "PEV": "pev_1982_2022_monthly_0.5deg.nc",
+    "WIND": "wind_1982_2022_monthly_0.5deg.nc",
+    "SPEI6": "../annual/spei06_1982_2022_annual_0.5deg.nc",
     "CO2": "../annual/human/co2_1982_2022_annual_0.5deg.nc",
     "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
     "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
@@ -35,6 +37,7 @@ FILE_MAP = {
     "SAND": "soil/sand_1982_2022_monthly_0.5deg.nc",
     "SILT": "soil/silt_1982_2022_monthly_0.5deg.nc",
     "SOC": "soil/soc_1982_2022_monthly_0.5deg.nc",
+    "TOTAL_N": "soil/total_n_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
 }
 
@@ -68,6 +71,8 @@ ANNUAL_AGGREGATION_RULES = {
     "VPD": "mean",
     "D2M": "mean",
     "PEV": "mean",
+    "WIND": "mean",
+    "SPEI6": "mean",
     "CO2": "mean",
     "HFP": "mean",
     "NDEP": "mean",
