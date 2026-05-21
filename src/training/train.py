@@ -129,7 +129,6 @@ def train_tabular_model(
     scaler_name: str | None = None,
     random_state: int = 42,
     mlflow_config: dict | None = None,
-    log_shap: bool = True,
     **model_kwargs,
 ) -> dict[str, Any]:
     """
@@ -154,7 +153,7 @@ def train_tabular_model(
     scaler = build_scaler(scaler_name)
 
     # Keep operational/config kwargs from leaking into sklearn estimators.
-    for reserved_key in ("mlflow_config", "log_shap"):
+    for reserved_key in ("mlflow_config",):
         model_kwargs.pop(reserved_key, None)
 
     if scaler is not None:
@@ -176,11 +175,10 @@ def train_tabular_model(
     mlflow_experiment = None
     if mlflow_config is not None:
         LOGGER.info(
-            "MLflow logging enabled for model=%s experiment=%s tracking_uri=%s log_shap=%s",
+            "MLflow logging enabled for model=%s experiment=%s tracking_uri=%s",
             model_name,
             mlflow_config.get("experiment_name", "default"),
             mlflow_config.get("tracking_uri"),
-            log_shap,
         )
         try:
             import mlflow
@@ -322,65 +320,6 @@ def train_tabular_model(
                             LOGGER.exception("Failed to log scaler artifact to MLflow, including fallback")
                 else:
                     LOGGER.info("No scaler configured; skipping scaler artifact logging")
-
-                # SHAP explanations (optional)
-                if log_shap:
-                    LOGGER.info("SHAP logging enabled; attempting explainer generation")
-                    try:
-                        import shap
-                        import matplotlib.pyplot as plt
-                        # use fast explainer when possible
-                        try:
-                            expl = shap.Explainer(model, X_train_used)
-                            shap_values = expl(X_train_used)
-                            LOGGER.info("Computed SHAP values with shap.Explainer")
-                        except Exception:
-                            LOGGER.warning("shap.Explainer failed; trying TreeExplainer fallback")
-                            # fallback to TreeExplainer or KernelExplainer
-                            try:
-                                expl = shap.TreeExplainer(model)
-                                shap_values = expl.shap_values(X_train_used)
-                                LOGGER.info("Computed SHAP values with shap.TreeExplainer")
-                            except Exception:
-                                shap_values = None
-                                LOGGER.exception("Failed to compute SHAP values with available explainers")
-
-                        if shap_values is not None:
-                            # compute mean absolute importance per feature
-                            try:
-                                import numpy as _np
-                                if hasattr(shap_values, "values"):
-                                    vals = shap_values.values
-                                else:
-                                    vals = shap_values
-                                # handle multilevel output
-                                if isinstance(vals, list):
-                                    vals_arr = _np.mean(_np.abs(_np.vstack([_np.asarray(v) for v in vals])), axis=0)
-                                else:
-                                    vals_arr = _np.mean(_np.abs(vals), axis=0)
-
-                                feat_names = [f"f{i}" for i in range(vals_arr.shape[-1])]
-                                # bar plot
-                                fig, ax = plt.subplots(figsize=(8, 4))
-                                ax.bar(range(len(vals_arr)), vals_arr)
-                                ax.set_xticks(range(len(vals_arr)))
-                                ax.set_xticklabels(feat_names, rotation=90)
-                                ax.set_ylabel("mean |SHAP value|")
-                                ax.set_title("Feature importance (SHAP)")
-                                shap_path = Path("/tmp") / f"shap_importance_{mlflow_run_id}.png"
-                                fig.tight_layout()
-                                fig.savefig(shap_path, dpi=150, bbox_inches='tight')
-                                plt.close(fig)
-                                mlflow.log_artifact(str(shap_path))
-                                LOGGER.info("Logged SHAP importance plot to MLflow: %s", shap_path)
-                            except Exception:
-                                LOGGER.exception("Failed to create or log SHAP importance plot")
-                        else:
-                            LOGGER.warning("Skipping SHAP artifact logging because no SHAP values were computed")
-                    except Exception:
-                        LOGGER.exception("Failed during SHAP logging setup or execution")
-                else:
-                    LOGGER.info("SHAP logging disabled for this run")
 
                 LOGGER.info("Completed MLflow logging for run %s", mlflow_run_id)
 

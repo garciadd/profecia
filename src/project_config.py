@@ -29,6 +29,29 @@ def _resolve_mlflow_config(raw: dict) -> dict:
     }
 
 
+def _resolve_explainability_config(raw: dict) -> dict:
+    explainability_raw = raw.get("explainability", {})
+    shap_raw = explainability_raw.get("shap", {})
+    method = str(explainability_raw.get("method", "shap")).lower().strip()
+
+    return {
+        "enabled": bool(explainability_raw.get("enabled", False)),
+        "run_after_training": bool(explainability_raw.get("run_after_training", False)),
+        "method": method,
+        "output_subdir": str(explainability_raw.get("output_subdir", method)).strip(),
+        "group_column": explainability_raw.get("group_column", "landcover_label"),
+        "local_error_column": explainability_raw.get("local_error_column", "abs_error"),
+        "shap": {
+            "max_samples_per_group": int(shap_raw.get("max_samples_per_group", 1000)),
+            "max_samples_total": (
+                None if shap_raw.get("max_samples_total") is None else int(shap_raw["max_samples_total"])
+            ),
+            "sample_fraction": float(shap_raw.get("sample_fraction", 0.5)),
+            "min_group_samples": int(shap_raw.get("min_group_samples", 30)),
+        },
+    }
+
+
 def _resolve_project_path(project_raw: dict, key: str, default: Path) -> Path:
     value = project_raw.get(key)
     if value is None:
@@ -133,6 +156,7 @@ def resolve_train_config(config_path: str | Path = "config/train.toml") -> dict:
         "target_name": data_cfg["target_name"],
         "predictor_names": list(data_cfg["predictor_names"]),
         "mlflow": dict(data_cfg["mlflow"]),
+        "explainability": _resolve_explainability_config(raw),
         "split_mode": split_mode,
         "train_fraction": train_fraction,
         "test_fraction": test_fraction,

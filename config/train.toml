@@ -75,3 +75,16 @@ max_samples = [0.3, 0.5, 0.8]
 
 [runtime]
 mmap_mode = "r"
+[explainability]
+enabled = false
+run_after_training = false
+method = "shap"
+output_subdir = "shap"
+group_column = "landcover_label"
+local_error_column = "abs_error"
+
+[explainability.shap]
+max_samples_per_group = 1000
+max_samples_total = 5000
+sample_fraction = 0.5
+min_group_samples = 30

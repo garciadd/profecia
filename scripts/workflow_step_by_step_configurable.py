@@ -37,6 +37,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.data import io
 from src.data.eda import load_processed_dataset
+from src.explainability.shap import run_configured_shap_analysis
 from src.evaluation.regression import (
     build_pixel_timeseries_dataframe,
     build_prediction_dataframe,
@@ -60,7 +61,64 @@ LOGGER = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(os.getenv("PROFECIA_TRAIN_CONFIG", "config/train.toml"))
 STOP_ON_ERROR = os.getenv("PROFECIA_STOP_ON_ERROR", "true").lower().strip() not in {"0", "false", "no"}
-LOG_SHAP = os.getenv("PROFECIA_LOG_SHAP", "false").lower().strip() in {"1", "true", "yes"}
+
+
+DEFAULT_LANDCOVER_LABELS = {
+    10: "Tree cover",
+    20: "Shrubland",
+    30: "Grassland",
+    40: "Cropland",
+    70: "Snow and ice",
+    90: "Herbaceous wetland",
+    100: "Moss and lichen",
+}
+
+
+def load_landcover_labels(mask_dir: Path) -> dict[int, str]:
+    mask_metadata_path = mask_dir / "mask_metadata.json"
+    if mask_metadata_path.exists():
+        with open(mask_metadata_path, "r", encoding="utf-8") as f:
+            mask_metadata = json.load(f)
+        masks_cfg = mask_metadata.get("masks", {})
+        landcover_cfg = masks_cfg.get("landcover", {})
+        labels = landcover_cfg.get("labels")
+        if labels:
+            return {int(k): str(v) for k, v in labels.items()}
+
+    LOGGER.info("mask_metadata.json or landcover labels not found in %s; using default landcover labels", mask_dir)
+    return dict(DEFAULT_LANDCOVER_LABELS)
+
+
+def add_optional_landcover_to_predictions(
+    cfg: dict,
+    prediction_df: pd.DataFrame,
+    latitude_values: np.ndarray,
+    longitude_values: np.ndarray,
+) -> pd.DataFrame:
+    mask_path = Path(cfg["mask_dir"]) / io.MASK_MAP["landcover"]
+    if not mask_path.exists():
+        LOGGER.info("Landcover mask not found at %s; skipping landcover annotations", mask_path)
+        return prediction_df
+
+    try:
+        landcover_mask = io.load_mask(
+            mask_dir=cfg["mask_dir"],
+            mask_name="landcover",
+            latitude=latitude_values,
+            longitude=longitude_values,
+        )
+        landcover_labels = load_landcover_labels(Path(cfg["mask_dir"]))
+        prediction_df = prediction_df.copy()
+        prediction_df["landcover_code"] = [
+            int(landcover_mask.values[int(i), int(j)])
+            for i, j in zip(prediction_df["lat_idx"], prediction_df["lon_idx"])
+        ]
+        prediction_df["landcover_label"] = prediction_df["landcover_code"].map(landcover_labels).fillna("Unknown")
+        LOGGER.info("Added optional landcover annotations to prediction dataframe")
+    except Exception:
+        LOGGER.exception("Failed to add optional landcover annotations; continuing without them")
+
+    return prediction_df
 
 
 def configure_logging(cfg: dict) -> Path:
@@ -267,7 +325,6 @@ def train_final_model(cfg: dict, dataset_metadata: dict) -> dict:
         scaler_name=cfg["scaler_name"],
         random_state=cfg["random_state"],
         mlflow_config=build_mlflow_config(cfg),
-        log_shap=LOG_SHAP,
         **model_params,
     )
     train_result["train_info"]["hyperparameter_search"] = hyperparameter_search
@@ -420,6 +477,8 @@ def evaluate_model(cfg: dict, bundle: dict, train_result: dict) -> dict:
 
     y_pred = np.asarray(train_result["model"].predict(X_test_used)).reshape(-1)
     target = bundle["target"]
+    latitude_values = target.latitude.values
+    longitude_values = target.longitude.values
     prediction_df = build_prediction_dataframe(
         y_true=y_test,
         y_pred=y_pred,
@@ -427,11 +486,19 @@ def evaluate_model(cfg: dict, bundle: dict, train_result: dict) -> dict:
         lat_idx=trace_test["lat_idx_test"],
         lon_idx=trace_test["lon_idx_test"],
         time_idx=trace_test["time_idx_test"],
-        latitude_values=target.latitude.values,
-        longitude_values=target.longitude.values,
+        latitude_values=latitude_values,
+        longitude_values=longitude_values,
         time_values=pd.to_datetime(dataset_metadata["time_values"]),
     )
     prediction_df["residual"] = prediction_df["y_true"] - prediction_df["y_pred"]
+    prediction_df["abs_error"] = (prediction_df["y_pred"] - prediction_df["y_true"]).abs()
+    prediction_df["sq_error"] = prediction_df["residual"] ** 2
+    prediction_df = add_optional_landcover_to_predictions(
+        cfg=cfg,
+        prediction_df=prediction_df,
+        latitude_values=latitude_values,
+        longitude_values=longitude_values,
+    )
 
     global_metrics = compute_global_regression_metrics(y_true=y_test, y_pred=y_pred)
     global_metrics["bias"] = float(np.mean(y_pred - np.asarray(y_test).reshape(-1)))
@@ -458,11 +525,30 @@ def evaluate_model(cfg: dict, bundle: dict, train_result: dict) -> dict:
         paths=paths,
     )
 
+    shap_result = run_configured_shap_analysis(
+        train_cfg=cfg,
+        model=train_result["model"],
+        X=X_test_used,
+        train_info=train_result.get("train_info"),
+        dataset_metadata=dataset_metadata,
+        prediction_df=prediction_df,
+    )
+    explainability_summary = None
+    if shap_result is not None:
+        explainability_summary = {
+            "output_dir": str(shap_result["output_dir"]),
+            "summary": shap_result["summary"],
+        }
+        LOGGER.info("Explainability artifacts saved in %s", shap_result["output_dir"])
+    else:
+        LOGGER.info("Explainability step skipped by configuration")
+
     LOGGER.info("Global metrics: %s", pformat(global_metrics))
     return {
         "global_metrics": global_metrics,
         "pixel_metrics_summary": pixel_metrics_summary,
         "evaluation_paths": {k: str(v) for k, v in paths.items()},
+        "explainability": explainability_summary,
     }
 
 
