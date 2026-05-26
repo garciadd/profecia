@@ -39,12 +39,15 @@ FILE_MAP = {
     "SOC": "soil/soc_1982_2022_monthly_0.5deg.nc",
     "TOTAL_N": "soil/total_n_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
+    "LC_3CLASS": "../annual/landcover_3classes_1982_2022_annual_0.5deg.nc",
+    "LC_7CLASS": "../annual/landcover_7classes_1982_2022_annual_0.5deg.nc",
 }
 
 MASK_MAP = {
     "land": "land_mask_0p5deg.npy",
     "ebf": "ebf_mask_0p5deg.npy",
     "bs": "bs_mask_0p5deg.npy",
+    "snow_ice": "snow_ice_mask_0p5deg.npy",
     "climate": "climate_mask_0p5_5classes.npy",
     "landcover": "landcover_mask_0p5_7classes.npy",
     "landcover_grassland": "landcover_grassland_0p5deg.npy",
@@ -88,7 +91,8 @@ ANNUAL_AGGREGATION_RULES = {
     "SOC": "mean",
     "TOTAL_N": "mean",
     "LC_STATIC": "mean",
-
+    "LC_3CLASS": "mean",
+    "LC_7CLASS": "mean",
 }
 
 CLIMATE_VALID_CODES = {1, 2, 3, 4, 5}
@@ -453,7 +457,7 @@ def build_combined_filter_mask(
 
         if name == "land":
             part = mask.astype(bool)
-        elif name in {"bs", "ebf"}:
+        elif name in {"bs", "ebf", "snow_ice"}:
             part = ~mask.astype(bool)
         elif name == "climate":
             part = xr.apply_ufunc(np.isin, mask, np.array(sorted(CLIMATE_VALID_CODES))).astype(bool)
