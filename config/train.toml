@@ -1,11 +1,11 @@
 [project]
 data_config = "data.toml" 
-model_base_dir = "/mnt_sentinel_a/ferag/data/models"
+model_base_dir = "/home/dani/github/profecia/data/models"
 
 [split]
 mode = "random_observation" # "spatial_pixel" o "random_observation"
-train_fraction = 0.8 # Fracción de píxeles válidos o de observaciones válidas que se retienen: 0.1, 0.3, 1.0
-test_fraction = 0.2 # Fracción de lo retenido que se manda a test: 0.1, 0.2
+train_fraction = 0.1 # Fracción de píxeles válidos o de observaciones válidas que se retienen: 0.1, 0.3, 1.0
+test_fraction = 0.1 # Fracción de lo retenido que se manda a test: 0.1, 0.2
 min_valid_fraction = 0.0 # Filtro mínimo de validez temporal por pixel: 0.0, 0.25, 0.5, 1.0
 seed = 42 
 
