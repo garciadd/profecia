@@ -162,10 +162,11 @@ def _plot_density_panel(ax, y_true, y_pred, metrics: dict[str, float], title: st
         ax.set_title(f"{title} - sin datos validos")
         return
 
-    robust_max = float(np.percentile(np.concatenate([y_true, y_pred]), 99.5))
+    robust_max = float(np.percentile(np.concatenate([y_true, y_pred]), 100.0))
     lim_max = robust_max * 1.15 if robust_max > 0 else 1.0
     hb = ax.hexbin(y_true, y_pred, gridsize=55, mincnt=1, bins="log", cmap="viridis", linewidths=0)
     lims = [0.0, lim_max]
+
     ax.plot(lims, lims, linestyle="--", color="black", linewidth=1.2)
     if np.isfinite(metrics.get("slope", np.nan)) and np.isfinite(metrics.get("intercept", np.nan)):
         x_fit = np.array(lims)
