@@ -129,6 +129,7 @@ def train_tabular_model(
     scaler_name: str | None = None,
     random_state: int = 42,
     mlflow_config: dict | None = None,
+    dataset_metadata: dict[str, Any] | None = None,
     **model_kwargs,
 ) -> dict[str, Any]:
     """
@@ -153,7 +154,7 @@ def train_tabular_model(
     scaler = build_scaler(scaler_name)
 
     # Keep operational/config kwargs from leaking into sklearn estimators.
-    for reserved_key in ("mlflow_config",):
+    for reserved_key in ("mlflow_config", "dataset_metadata"):
         model_kwargs.pop(reserved_key, None)
 
     if scaler is not None:
@@ -207,6 +208,7 @@ def train_tabular_model(
 
             with mlflow.start_run(run_name=run_name) as run:
                 mlflow_run_id = run.info.run_id
+                feature_names = None if dataset_metadata is None else dataset_metadata.get("feature_names")
                 LOGGER.info("Started MLflow run: %s", mlflow_run_id)
                 # log params
                 mlflow.log_param("model_name_requested", model_name)
@@ -214,6 +216,8 @@ def train_tabular_model(
                 mlflow.log_param("random_state", int(random_state))
                 mlflow.log_param("n_rows_train", int(X_train.shape[0]))
                 mlflow.log_param("n_features", int(X_train.shape[1]))
+                if feature_names is not None:
+                    mlflow.log_param("feature_names", json.dumps(feature_names, ensure_ascii=False))
                 
                 LOGGER.info(
                     "Logging MLflow params for model=%s rows=%s features=%s",
@@ -292,8 +296,8 @@ def train_tabular_model(
 
                 # log model and scaler as artifacts
                 try:
-                    mlflow.sklearn.log_model(model, name="model")
-                    LOGGER.info("Logged sklearn model artifact to MLflow")
+                    #mlflow.sklearn.log_model(model, name="model")
+                    LOGGER.info("SKIPPED: Logged sklearn model artifact to MLflow")
                 except Exception:
                     LOGGER.warning("mlflow.sklearn.log_model failed for model; trying joblib artifact fallback")
                     try:
@@ -301,13 +305,14 @@ def train_tabular_model(
                         #tmp_model = Path("/tmp") / f"model_{mlflow_run_id}.joblib"
                         #joblib.dump(model, tmp_model)
                         #mlflow.log_artifact(str(tmp_model))
-                        LOGGER.info("SKIPPED: Logged model artifact via joblib fallback: %s", tmp_model)
+                        #LOGGER.info("SKIPPED: Logged model artifact via joblib fallback: %s", tmp_model)
+                        LOGGER.info("SKIPPED: Logged model artifact via joblib fallback (not implemented)")
                     except Exception:
                         LOGGER.exception("Failed to log model artifact to MLflow, including fallback")
 
                 if scaler is not None:
                     try:
-                        mlflow.sklearn.log_model(scaler, name="scaler")
+                        #mlflow.sklearn.log_model(scaler, name="scaler")
                         LOGGER.info("Logged scaler artifact to MLflow")
                     except Exception:
                         LOGGER.warning("mlflow.sklearn.log_model failed for scaler; trying joblib artifact fallback")
@@ -315,7 +320,7 @@ def train_tabular_model(
                             #tmp_scaler = Path("/tmp") / f"scaler_{mlflow_run_id}.joblib"
                             #joblib.dump(scaler, tmp_scaler)
                             #mlflow.log_artifact(str(tmp_scaler))
-                            LOGGER.info("SKIPPED: Logged scaler artifact via joblib fallback: %s", tmp_scaler)
+                            LOGGER.info("SKIPPED: Logged scaler artifact via joblib fallback (not implemented)")
                         except Exception:
                             LOGGER.exception("Failed to log scaler artifact to MLflow, including fallback")
                 else:

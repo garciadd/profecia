@@ -46,6 +46,11 @@ from src.evaluation.regression import (
     rank_best_and_worst_pixels,
     summarize_pixel_metrics,
 )
+from src.evaluation.visualization import (
+    add_hist_stats,
+    plot_observation_bundle,
+    run_observation_category_analysis,
+)
 from src.project_config import resolve_train_config
 from src.training.dataset import export_train_test_data
 from src.training.hyperparam_search import run_hyperparameter_search
@@ -331,6 +336,7 @@ def train_final_model(cfg: dict, dataset_metadata: dict) -> dict:
         scaler_name=cfg["scaler_name"],
         random_state=cfg["random_state"],
         mlflow_config=build_mlflow_config(cfg),
+        dataset_metadata=dataset_metadata,
         **model_params,
     )
     train_result["train_info"]["hyperparameter_search"] = hyperparameter_search
@@ -437,8 +443,32 @@ def save_evaluation_outputs(
         fig.savefig(best_worst_pixels_path, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
+    global_metrics, time_metrics_df, pixel_test_summary_df = plot_observation_bundle(
+        title="Global",
+        df=prediction_df,
+        output_dir=out_dir,
+        filename_slug="random_observation_global_summary",
+    )
+
+    if "landcover_code" in prediction_df.columns:
+        landcover_summary_df = run_observation_category_analysis(
+            df=prediction_df,
+            code_col="landcover_code",
+            labels_map=DEFAULT_LANDCOVER_LABELS,
+            section_title="Land cover",
+            ignore_codes=(0,),
+            output_dir=out_dir,
+            filename_prefix="landcover_random_observation",
+        )
+    else:
+        landcover_summary_df = pd.DataFrame()
+        print("Analisis por land cover omitido: no hay mascara landcover disponible.")
+
+
+
     return {
         "summary": summary_path,
+        "global_summary": out_dir / "random_observation_global_summary.png",
         "pixel_metrics": pixel_metrics_path,
         "prediction_sample": prediction_sample_path,
         "global_hexbin": global_hexbin_path,
