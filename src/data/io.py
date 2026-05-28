@@ -52,8 +52,14 @@ MASK_MAP = {
     "snow_ice": "snow_ice_mask_0p5deg.npy",
     "climate": "climate_mask_0p5_5classes.npy",
     "landcover": "landcover_mask_0p5_7classes.npy",
-    "landcover_grassland": "landcover_grassland_0p5deg.npy",
+    # Per-class landcover masks (binary)
+    "landcover_cropland": "landcover_cropland_0p5deg.npy",
     "landcover_forest": "landcover_forest_0p5deg.npy",
+    "landcover_grassland": "landcover_grassland_0p5deg.npy",
+    "landcover_shrubland": "landcover_shrubland_0p5deg.npy",
+    "landcover_tundra": "landcover_tundra_0p5deg.npy",
+    "landcover_barren": "landcover_barren_0p5deg.npy",
+    "landcover_snow_ice": "landcover_snow_ice_0p5deg.npy",
 }
 
 STANDARD_DIM_NAMES = {
@@ -459,7 +465,8 @@ def build_combined_filter_mask(
 
         if name == "land":
             part = mask.astype(bool)
-        elif name in {"bs", "ebf", "snow_ice"}:
+        elif name in {"bs", "ebf", "landcover_cropland", "landcover_forest", 
+                    "landcover_grassland", "landcover_shrubland", "landcover_tundra", "landcover_barren", "landcover_snow_ice"}:
             part = ~mask.astype(bool)
         elif name == "climate":
             part = xr.apply_ufunc(np.isin, mask, np.array(sorted(CLIMATE_VALID_CODES))).astype(bool)
