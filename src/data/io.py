@@ -18,12 +18,15 @@ FILE_MAP = {
     "LAI": "lai_1982_2022_monthly_0.5deg.nc",
     "SM1": "swvl1_1982_2022_monthly_0.5deg.nc",
     "SM2": "subswc_1982_2022_monthly_0.5deg.nc",
+    "SM1-2": "swvl1-2_1982_2022_monthly_0.5deg.nc",
     "TP": "tp_1982_2022_monthly_0.5deg.nc",
     "T2M": "t2m_1982_2022_monthly_0.5deg.nc",
     "SSRD": "ssrd_1982_2022_monthly_0.5deg.nc",
     "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
     "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
     "PEV": "pev_1982_2022_monthly_0.5deg.nc",
+    "WIND": "wind_1982_2022_monthly_0.5deg.nc",
+    "SPEI": "spei06_univariable_1982_2022_monthly_0.5deg.nc",
     "CO2": "../annual/human/co2_1982_2022_annual_0.5deg.nc",
     "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
     "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
@@ -31,19 +34,33 @@ FILE_MAP = {
     "ELEVATION": "soil/elevation_1982_2022_monthly_0.5deg.nc",
     "PH": "soil/ph_1982_2022_monthly_0.5deg.nc",
     "RICHNESS": "soil/richness_1982_2022_monthly_0.5deg.nc",
+    "BULK": "soil/bulk_1982_2022_monthly_0.5deg.nc",
+    "CEC": "soil/cec_1982_2022_monthly_0.5deg.nc",
+    "CLAY": "soil/clay_1982_2022_monthly_0.5deg.nc",
+    "SAND": "soil/sand_1982_2022_monthly_0.5deg.nc",
+    "SILT": "soil/silt_1982_2022_monthly_0.5deg.nc",
+    "SOC": "soil/soc_1982_2022_monthly_0.5deg.nc",
+    "TOTAL_N": "soil/total_n_1982_2022_monthly_0.5deg.nc",
     "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
-    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
-    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
+    "LC_3CLASS": "../annual/landcover_3classes_1982_2022_annual_0.5deg.nc",
+    "LC_7CLASS": "../annual/landcover_7classes_1982_2022_annual_0.5deg.nc",
 }
 
 MASK_MAP = {
     "land": "land_mask_0p5deg.npy",
     "ebf": "ebf_mask_0p5deg.npy",
     "bs": "bs_mask_0p5deg.npy",
+    "snow_ice": "snow_ice_mask_0p5deg.npy",
     "climate": "climate_mask_0p5_5classes.npy",
     "landcover": "landcover_mask_0p5_7classes.npy",
-    "landcover_grassland": "landcover_grassland_0p5deg.npy",
+    # Per-class landcover masks (binary)
+    "landcover_cropland": "landcover_cropland_0p5deg.npy",
     "landcover_forest": "landcover_forest_0p5deg.npy",
+    "landcover_grassland": "landcover_grassland_0p5deg.npy",
+    "landcover_shrubland": "landcover_shrubland_0p5deg.npy",
+    "landcover_tundra": "landcover_tundra_0p5deg.npy",
+    "landcover_barren": "landcover_barren_0p5deg.npy",
+    "landcover_snow_ice": "landcover_snow_ice_0p5deg.npy",
 }
 
 STANDARD_DIM_NAMES = {
@@ -60,13 +77,32 @@ ANNUAL_AGGREGATION_RULES = {
     "LAI": "mean",
     "SM1": "mean",
     "SM2": "mean",
+    "SM1-2": "mean",
     "TP": "sum",
     "T2M": "mean",
     "SSRD": "sum",
     "VPD": "mean",
     "D2M": "mean",
-    "PEV": "sum",
+    "PEV": "mean",
+    "WIND": "mean",
+    "SPEI": "mean",
+    "CO2": "mean",
+    "HFP": "mean",
+    "NDEP": "mean",
+    "TLU": "mean",
+    "ELEVATION": "mean",
+    "PH": "mean",
+    "RICHNESS": "mean",
+    "BULK": "mean",
+    "CEC": "mean",
+    "CLAY": "mean",
+    "SAND": "mean",
+    "SILT": "mean",
+    "SOC": "mean",
+    "TOTAL_N": "mean",
     "LC_STATIC": "mean",
+    "LC_3CLASS": "mean",
+    "LC_7CLASS": "mean",
 }
 
 CLIMATE_VALID_CODES = {1, 2, 3, 4, 5}
@@ -431,7 +467,8 @@ def build_combined_filter_mask(
 
         if name == "land":
             part = mask.astype(bool)
-        elif name in {"bs", "ebf"}:
+        elif name in {"bs", "ebf", "landcover_cropland", "landcover_forest", 
+                    "landcover_grassland", "landcover_shrubland", "landcover_tundra", "landcover_barren", "landcover_snow_ice"}:
             part = ~mask.astype(bool)
         elif name == "climate":
             part = xr.apply_ufunc(np.isin, mask, np.array(sorted(CLIMATE_VALID_CODES))).astype(bool)
@@ -630,6 +667,12 @@ def _process_and_save_single_dataarray(
         products=preprocess_result.products,
         save_output=save_output,
     )
+
+    load_meta_out = dict(meta_load)
+    load_meta_out["lag_applied"] = bool(lag_steps > 0)
+    load_meta_out["lag_apply_stage"] = lag_apply_stage
+    if lag_steps > 0:
+        load_meta_out["lag_temporal_unit"] = "months" if temporal_resolution == "monthly" else "years"
 
     output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
 

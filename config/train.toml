@@ -17,20 +17,20 @@ random_state = 42
 [model.params]
 
 # si model.name = "rf":
-# n_estimators = 50
-# max_depth = 20
-# min_samples_leaf = 5
-# max_features = "sqrt"
-# n_jobs = 1
-# bootstrap = true
-# max_samples = 0.3
+n_estimators = 500
+max_depth = 20
+min_samples_leaf = 1
+max_features = "sqrt"
+n_jobs = 2
+bootstrap = true
+max_samples = 0.3
 
 # si model.name = "hgb":
-loss = "squared_error"
-learning_rate = 0.1
-max_iter = 300
-max_depth = 12
-min_samples_leaf = 50
+#loss = "squared_error"
+#learning_rate = 0.1
+#max_iter = 300
+#max_depth = 12
+#min_samples_leaf = 50
 
 # si model.name = "mlp":
 # hidden_layer_sizes = [128, 64]
@@ -75,3 +75,16 @@ max_samples = [0.3, 0.5, 0.8]
 
 [runtime]
 mmap_mode = "r"
+[explainability]
+enabled = false
+run_after_training = false
+method = "shap"
+output_subdir = "shap"
+group_column = "landcover_label"
+local_error_column = "abs_error"
+
+[explainability.shap]
+max_samples_per_group = 1000
+max_samples_total = 5000
+sample_fraction = 0.5
+min_group_samples = 30
