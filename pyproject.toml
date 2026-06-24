@@ -20,7 +20,7 @@ dependencies = [
     "matplotlib",
     "scipy",
     "statsmodels",
-    "scikit-learn",
+    "scikit-learn==1.8.0",
     "jupyter",
     "notebook",
     "ipykernel",
