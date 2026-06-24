@@ -1,10 +1,12 @@
+import importlib
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import joblib
-import os
 import numpy as np
 from sklearn.preprocessing import RobustScaler, StandardScaler
 
@@ -446,6 +448,39 @@ def save_trained_pipeline(
         "train_info_path": str(train_info_path),
     }
 
+
+def _inject_sklearn_import_aliases() -> dict[str, Any]:
+    """Create compatibility aliases used during sklearn model unpickling."""
+    aliases: dict[str, Any] = {}
+
+    try:
+        loss_module = importlib.import_module("sklearn._loss")
+        aliases.setdefault("_loss", loss_module)
+        aliases.setdefault("sklearn._loss", loss_module)
+    except Exception:
+        pass
+
+    try:
+        nn_loss = importlib.import_module("sklearn.neural_network._loss")
+        aliases.setdefault("sklearn.neural_network._loss", nn_loss)
+    except Exception:
+        pass
+
+    inserted_aliases = {}
+    for alias, module in aliases.items():
+        if alias not in sys.modules:
+            sys.modules[alias] = module
+            inserted_aliases[alias] = module
+
+    return inserted_aliases
+
+
+def _remove_sklearn_import_aliases(inserted_aliases: dict[str, Any]) -> None:
+    for alias, module in inserted_aliases.items():
+        if sys.modules.get(alias) is module:
+            del sys.modules[alias]
+
+
 def load_trained_pipeline(
     model_path: str | Path,
     scaler_path: str | Path | None = None,
@@ -453,10 +488,25 @@ def load_trained_pipeline(
     """
     Carga modelo y scaler.
     """
-    model = joblib.load(model_path)
+    inserted_aliases = _inject_sklearn_import_aliases()
+    try:
+        try:
+            model = joblib.load(model_path)
+        except ModuleNotFoundError as exc:
+            if exc.name == "_loss" or exc.name == "sklearn._loss" or exc.name == "sklearn.neural_network._loss":
+                inserted_aliases.update(_inject_sklearn_import_aliases())
+                model = joblib.load(model_path)
+            else:
+                raise
+    finally:
+        _remove_sklearn_import_aliases(inserted_aliases)
 
     scaler = None
     if scaler_path is not None:
-        scaler = joblib.load(scaler_path)
+        inserted_aliases = _inject_sklearn_import_aliases()
+        try:
+            scaler = joblib.load(scaler_path)
+        finally:
+            _remove_sklearn_import_aliases(inserted_aliases)
 
     return model, scaler
