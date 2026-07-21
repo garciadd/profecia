@@ -13,56 +13,6 @@ import xarray as xr
 
 from src.data import preprocess
 
-
-FILE_MAP = {
-    "LAI": "lai_1982_2022_monthly_0.5deg.nc",
-    "SM1": "swvl1_1982_2022_monthly_0.5deg.nc",
-    "SM2": "subswc_1982_2022_monthly_0.5deg.nc",
-    "SM1-2": "swvl1-2_1982_2022_monthly_0.5deg.nc",
-    "TP": "tp_1982_2022_monthly_0.5deg.nc",
-    "T2M": "t2m_1982_2022_monthly_0.5deg.nc",
-    "SSRD": "ssrd_1982_2022_monthly_0.5deg.nc",
-    "VPD": "vpd_1982_2022_monthly_0.5deg.nc",
-    "D2M": "d2m_1982_2022_monthly_0.5deg.nc",
-    "PEV": "pev_1982_2022_monthly_0.5deg.nc",
-    "WIND": "wind_1982_2022_monthly_0.5deg.nc",
-    "SPEI": "spei06_univariable_1982_2022_monthly_0.5deg.nc",
-    "CO2": "../annual/human/co2_1982_2022_annual_0.5deg.nc",
-    "HFP": "../annual/human/hfp_1982_2022_annual_0.5deg.nc",
-    "NDEP": "../annual/human/ndep_1982_2022_annual_0.5deg.nc",
-    "TLU": "../annual/human/tlu_1982_2022_annual_0.5deg.nc",
-    "ELEVATION": "soil/elevation_1982_2022_monthly_0.5deg.nc",
-    "PH": "soil/ph_1982_2022_monthly_0.5deg.nc",
-    "RICHNESS": "soil/richness_1982_2022_monthly_0.5deg.nc",
-    "BULK": "soil/bulk_1982_2022_monthly_0.5deg.nc",
-    "CEC": "soil/cec_1982_2022_monthly_0.5deg.nc",
-    "CLAY": "soil/clay_1982_2022_monthly_0.5deg.nc",
-    "SAND": "soil/sand_1982_2022_monthly_0.5deg.nc",
-    "SILT": "soil/silt_1982_2022_monthly_0.5deg.nc",
-    "SOC": "soil/soc_1982_2022_monthly_0.5deg.nc",
-    "TOTAL_N": "soil/total_n_1982_2022_monthly_0.5deg.nc",
-    "LC_STATIC": "landcover_static_1982_2022_monthly_0.5deg.nc",
-    "LC_3CLASS": "../annual/landcover_3classes_1982_2022_annual_0.5deg.nc",
-    "LC_7CLASS": "../annual/landcover_7classes_1982_2022_annual_0.5deg.nc",
-}
-
-MASK_MAP = {
-    "land": "land_mask_0p5deg.npy",
-    "ebf": "ebf_mask_0p5deg.npy",
-    "bs": "bs_mask_0p5deg.npy",
-    "snow_ice": "snow_ice_mask_0p5deg.npy",
-    "climate": "climate_mask_0p5_5classes.npy",
-    "landcover": "landcover_mask_0p5_7classes.npy",
-    # Per-class landcover masks (binary)
-    "landcover_cropland": "landcover_cropland_0p5deg.npy",
-    "landcover_forest": "landcover_forest_0p5deg.npy",
-    "landcover_grassland": "landcover_grassland_0p5deg.npy",
-    "landcover_shrubland": "landcover_shrubland_0p5deg.npy",
-    "landcover_tundra": "landcover_tundra_0p5deg.npy",
-    "landcover_barren": "landcover_barren_0p5deg.npy",
-    "landcover_snow_ice": "landcover_snow_ice_0p5deg.npy",
-}
-
 STANDARD_DIM_NAMES = {
     "lat": "latitude",
     "latitude": "latitude",
@@ -77,7 +27,7 @@ ANNUAL_AGGREGATION_RULES = {
     "LAI": "mean",
     "SM1": "mean",
     "SM2": "mean",
-    "SM1-2": "mean",
+    "SM1_2": "mean",
     "TP": "sum",
     "T2M": "mean",
     "SSRD": "sum",
@@ -105,8 +55,6 @@ ANNUAL_AGGREGATION_RULES = {
     "LC_7CLASS": "mean",
 }
 
-CLIMATE_VALID_CODES = {1, 2, 3, 4, 5}
-LANDCOVER_VALID_CODES = {10, 20, 30, 40, 70, 90, 100}
 LAGGED_VARIABLE_PATTERN = re.compile(r"^(?P<base>[A-Z0-9_]+)_LAG_(?P<lag>\d+)$")
 
 
@@ -116,6 +64,19 @@ class ROI:
     lat_max: float
     lon_min: float
     lon_max: float
+
+
+def _normalize_roi(roi: ROI | dict[str, float] | None) -> ROI | None:
+    if roi is None or isinstance(roi, ROI):
+        return roi
+    if isinstance(roi, dict):
+        return ROI(
+            lat_min=float(roi["lat_min"]),
+            lat_max=float(roi["lat_max"]),
+            lon_min=float(roi["lon_min"]),
+            lon_max=float(roi["lon_max"]),
+        )
+    raise TypeError("roi debe ser ROI, dict o None.")
 
 
 def _parse_variable_request(variable: str) -> dict[str, Any]:
@@ -142,12 +103,31 @@ def _parse_variable_request(variable: str) -> dict[str, Any]:
 
 
 def _get_path(base_dir: str | Path, name: str, file_map: dict[str, str]) -> Path:
-    name = name.lower()
-    if name not in file_map:
-        raise ValueError(f"'{name}' no soportado. Disponibles: {list(file_map)}")
-    path = Path(base_dir) / file_map[name]
+    """Resuelve una ruta registrada en paths.toml."""
+
+    base_dir = Path(base_dir).expanduser()
+
+    normalized_name = str(name).upper().strip()
+    normalized_map = {
+        str(key).upper().strip(): str(value)
+        for key, value in file_map.items()
+    }
+
+    if normalized_name not in normalized_map:
+        available = ", ".join(sorted(normalized_map))
+
+        raise ValueError(
+            f"{normalized_name!r} no está registrado. "
+            f"Disponibles: {available}"
+        )
+
+    path = (base_dir / normalized_map[normalized_name]).resolve()
+
     if not path.exists():
-        raise FileNotFoundError(f"No existe el archivo: {path}")
+        raise FileNotFoundError(
+            f"No existe el archivo para {normalized_name!r}: {path}"
+        )
+
     return path
 
 
@@ -300,15 +280,17 @@ def _apply_lagged_shift(
 def load_netcdf(
     base_dir: str | Path,
     variable: str,
-    roi: ROI | None = None,
+    variable_file_map: dict[str, str],
+    roi: ROI | dict[str, float] | None = None,
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
 ) -> tuple[xr.DataArray, dict]:
+    
     variable_info = _parse_variable_request(variable)
     variable = variable_info["requested_name"]
     base_variable = variable_info["base_name"]
-    path = _get_path(base_dir, base_variable.lower(), {k.lower(): v for k, v in FILE_MAP.items()})
+    path = _get_path(base_dir, base_variable, variable_file_map)
 
     ds = xr.open_dataset(path)
     ds = _standardize_dataset(ds)
@@ -319,7 +301,7 @@ def load_netcdf(
     else:
         da = ds[var_name].transpose("time", "latitude", "longitude")
     da = _select_time(da, start_year, end_year_inclusive)
-    da = _select_roi(da, roi)
+    da = _select_roi(da, _normalize_roi(roi))
     da = da.astype(dtype)
     _validate_coords(da)
 
@@ -415,33 +397,71 @@ def load_mask(
     mask_name: str,
     latitude: np.ndarray,
     longitude: np.ndarray,
+    mask_file_map: dict[str, str] | None = None,
 ) -> xr.DataArray:
-    """
-    Carga una máscara desde NPY usando MASK_MAP.
-    Se asume que las máscaras ya están guardadas en convención del pipeline:
-    latitude ascendente (-90 -> 90), longitude ascendente (-180 -> 180).
-    """
-    path = _get_path(mask_dir, mask_name, MASK_MAP)
-    arr = np.load(path)
+    """Carga una máscara global de 0.5 grados y la recorta al grid solicitado."""
+    if mask_file_map is None:
+        raise ValueError("Debes proporcionar mask_file_map para cargar la máscara.")
 
-    expected_shape = (len(latitude), len(longitude))
-    if arr.shape != expected_shape:
+    path = _get_path(mask_dir, mask_name, mask_file_map)
+    array = np.load(path)
+    if array.ndim != 2:
         raise ValueError(
-            f"Shape de la máscara {arr.shape} no coincide con el grid esperado {expected_shape} para {mask_name}"
+            f"La máscara {mask_name!r} debe ser bidimensional. "
+            f"Shape encontrada: {array.shape}."
         )
 
-    return xr.DataArray(
-        arr,
-        coords={"latitude": latitude, "longitude": longitude},
+    latitude = np.asarray(latitude, dtype=np.float64)
+    longitude = np.asarray(longitude, dtype=np.float64)
+
+    if array.shape == (len(latitude), len(longitude)):
+        return xr.DataArray(
+            array,
+            coords={"latitude": latitude, "longitude": longitude},
+            dims=("latitude", "longitude"),
+            name=mask_name,
+        )
+
+    if array.shape != (360, 720):
+        raise ValueError(
+            f"La máscara global {mask_name!r} debe tener shape (360, 720). "
+            f"Shape encontrada: {array.shape}."
+        )
+
+    global_mask = xr.DataArray(
+        array,
+        coords={
+            "latitude": np.arange(-90.0, 90.0, 0.5),
+            "longitude": np.arange(-180.0, 180.0, 0.5),
+        },
         dims=("latitude", "longitude"),
         name=mask_name,
     )
 
+    try:
+        selected = global_mask.sel(
+            latitude=xr.DataArray(latitude, dims="latitude"),
+            longitude=xr.DataArray(longitude, dims="longitude"),
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"La máscara {mask_name!r} no comparte el grid de la variable."
+        ) from exc
 
-def _validate_mask_alignment(da: xr.DataArray, mask: xr.DataArray, name: str) -> None:
+    return selected.assign_coords(latitude=latitude, longitude=longitude)
+
+
+def _validate_mask_alignment(
+    da: xr.DataArray,
+    mask: xr.DataArray,
+    name: str,
+) -> None:
     if tuple(mask.dims) != ("latitude", "longitude"):
         raise ValueError(f"{name} debe tener dims ('latitude', 'longitude').")
-    if da.sizes["latitude"] != mask.sizes["latitude"] or da.sizes["longitude"] != mask.sizes["longitude"]:
+    if (
+        da.sizes["latitude"] != mask.sizes["latitude"]
+        or da.sizes["longitude"] != mask.sizes["longitude"]
+    ):
         raise ValueError(f"{name} no coincide en shape espacial.")
     if not np.array_equal(da["latitude"].values, mask["latitude"].values):
         raise ValueError(f"{name} no comparte latitude.")
@@ -452,39 +472,96 @@ def _validate_mask_alignment(da: xr.DataArray, mask: xr.DataArray, name: str) ->
 def build_combined_filter_mask(
     da: xr.DataArray,
     masks: dict[str, xr.DataArray] | None = None,
+    binary_mask_metadata: dict[str, dict[str, Any]] | None = None,
+    categorical_masks: dict[str, xr.DataArray] | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
+    categorical_mask_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[xr.DataArray | None, dict[str, Any]]:
-    if not masks:
-        return None, {"mask_names": [], "combined_fraction_kept": None}
+    """Combina máscaras binarias y selecciones categóricas."""
+    binary_masks = masks or {}
+    categorical_masks = categorical_masks or {}
+    categorical_filters = categorical_filters or {}
 
-    allowed = MASK_MAP.keys()
-    unknown = set(masks) - allowed
-    if unknown:
-        raise ValueError(f"Máscaras no soportadas: {sorted(unknown)}")
+    parts: list[xr.DataArray] = []
+    binary_info: dict[str, dict[str, Any]] = {}
+    categorical_info: dict[str, dict[str, Any]] = {}
 
-    parts = []
-    for name, mask in masks.items():
+    if binary_masks and binary_mask_metadata is None:
+        raise ValueError("Falta binary_mask_metadata.")
+
+    for name, mask in binary_masks.items():
         _validate_mask_alignment(da, mask, name)
+        metadata = (binary_mask_metadata or {}).get(name)
+        if metadata is None:
+            raise ValueError(f"Máscara binaria no registrada: {name!r}.")
+        if not bool(metadata.get("enabled", True)):
+            raise ValueError(f"La máscara {name!r} está deshabilitada.")
 
-        if name == "land":
+        mode = str(metadata.get("mode", "")).lower().strip()
+        if mode == "include":
             part = mask.astype(bool)
-        elif name in {"bs", "ebf", "landcover_cropland", "landcover_forest", 
-                    "landcover_grassland", "landcover_shrubland", "landcover_tundra", "landcover_barren", "landcover_snow_ice"}:
+        elif mode == "exclude":
             part = ~mask.astype(bool)
-        elif name == "climate":
-            part = xr.apply_ufunc(np.isin, mask, np.array(sorted(CLIMATE_VALID_CODES))).astype(bool)
-        elif name == "landcover":
-            part = xr.apply_ufunc(np.isin, mask, np.array(sorted(LANDCOVER_VALID_CODES))).astype(bool)
         else:
-            part = mask.astype(bool)
+            raise ValueError(
+                f"Modo no válido para {name!r}: {mode!r}. "
+                "Debe ser 'include' o 'exclude'."
+            )
+
         parts.append(part)
+        binary_info[name] = {
+            "mode": mode,
+            "pixels_kept": int(part.sum()),
+            "total_pixels": int(part.size),
+            "fraction_kept": float(part.mean()),
+        }
+
+    for name, selected_classes in categorical_filters.items():
+        selected_classes = sorted({int(value) for value in selected_classes})
+        if not selected_classes:
+            continue
+        if name not in categorical_masks:
+            raise ValueError(f"No se ha cargado la máscara categórica {name!r}.")
+
+        metadata = (categorical_mask_metadata or {}).get(name, {})
+        if not bool(metadata.get("enabled", True)):
+            raise ValueError(f"La máscara categórica {name!r} está deshabilitada.")
+
+        mask = categorical_masks[name]
+        _validate_mask_alignment(da, mask, name)
+        part = xr.apply_ufunc(
+            np.isin,
+            mask,
+            np.asarray(selected_classes, dtype=np.int64),
+        ).astype(bool)
+        parts.append(part)
+        categorical_info[name] = {
+            "selected_classes": selected_classes,
+            "pixels_kept": int(part.sum()),
+            "total_pixels": int(part.size),
+            "fraction_kept": float(part.mean()),
+        }
+
+    if not parts:
+        return None, {
+            "mask_names": [],
+            "categorical_filters": {},
+            "combined_fraction_kept": None,
+        }
 
     combined = parts[0]
     for part in parts[1:]:
         combined = combined & part
-
     combined = combined.rename("combined_filter_mask")
+
     info = {
-        "mask_names": list(masks.keys()),
+        "mask_names": list(binary_masks),
+        "binary_masks": binary_info,
+        "categorical_filters": {
+            name: values["selected_classes"]
+            for name, values in categorical_info.items()
+        },
+        "categorical_masks": categorical_info,
         "combined_pixels_kept": int(combined.sum()),
         "combined_total_pixels": int(combined.size),
         "combined_fraction_kept": float(combined.mean()),
@@ -492,7 +569,10 @@ def build_combined_filter_mask(
     return combined, info
 
 
-def apply_filter_mask(da: xr.DataArray, filter_mask: xr.DataArray | None) -> xr.DataArray:
+def apply_filter_mask(
+    da: xr.DataArray,
+    filter_mask: xr.DataArray | None,
+) -> xr.DataArray:
     if filter_mask is None:
         return da
     _validate_mask_alignment(da, filter_mask, "filter_mask")
@@ -607,6 +687,10 @@ def _process_and_save_single_dataarray(
     meta_load: dict,
     mask_dir: str | Path | None = None,
     masks: dict | None = None,
+    binary_mask_metadata: dict[str, dict[str, Any]] | None = None,
+    categorical_masks: dict | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
+    categorical_mask_metadata: dict[str, dict[str, Any]] | None = None,
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
@@ -614,9 +698,11 @@ def _process_and_save_single_dataarray(
     detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
-    """Procesa una única DataArray 3D y devuelve metadata de salida + processing info."""
+    """Procesa una única DataArray 3D y devuelve sus metadatos."""
     variable_info = {
-        "requested_name": str(meta_load.get("variable_requested", variable_name)).upper(),
+        "requested_name": str(
+            meta_load.get("variable_requested", variable_name)
+        ).upper(),
         "base_name": str(meta_load.get("variable_base", variable_name)).upper(),
         "lag_steps": int(meta_load.get("lag_steps", 0)),
         "is_lagged": bool(meta_load.get("is_lagged", False)),
@@ -626,9 +712,7 @@ def _process_and_save_single_dataarray(
 
     if temporal_resolution == "monthly":
         da_for_aggregation = _apply_lagged_shift(
-            da_raw,
-            lag_steps=lag_steps,
-            temporal_resolution=temporal_resolution,
+            da_raw, lag_steps, temporal_resolution
         )
         lag_apply_stage = "pre_aggregation" if lag_steps > 0 else None
     elif temporal_resolution == "annual":
@@ -644,15 +728,17 @@ def _process_and_save_single_dataarray(
         annual_rule=annual_rule,
         require_full_years=require_full_years,
     )
-
     if temporal_resolution == "annual" and lag_steps > 0:
-        da_agg = _apply_lagged_shift(
-            da_agg,
-            lag_steps=lag_steps,
-            temporal_resolution=temporal_resolution,
-        )
+        da_agg = _apply_lagged_shift(da_agg, lag_steps, temporal_resolution)
 
-    combined_mask, mask_info = build_combined_filter_mask(da_agg, masks if masks else None)
+    combined_mask, mask_info = build_combined_filter_mask(
+        da=da_agg,
+        masks=masks,
+        binary_mask_metadata=binary_mask_metadata,
+        categorical_masks=categorical_masks,
+        categorical_filters=categorical_filters,
+        categorical_mask_metadata=categorical_mask_metadata,
+    )
     da_masked = apply_filter_mask(da_agg, combined_mask)
     preprocess_result = preprocess.apply_preprocessing(
         da_masked,
@@ -662,24 +748,23 @@ def _process_and_save_single_dataarray(
     )
     da_final = preprocess_result.data
     preprocess_products = save_preprocess_products(
-        output_dir=output_dir,
-        variable_name=variable_name,
-        products=preprocess_result.products,
-        save_output=save_output,
+        output_dir, variable_name, preprocess_result.products, save_output
     )
 
     load_meta_out = dict(meta_load)
-    load_meta_out["lag_applied"] = bool(lag_steps > 0)
+    load_meta_out["lag_applied"] = lag_steps > 0
     load_meta_out["lag_apply_stage"] = lag_apply_stage
-    if lag_steps > 0:
-        load_meta_out["lag_temporal_unit"] = "months" if temporal_resolution == "monthly" else "years"
+    load_meta_out["lag_temporal_unit"] = (
+        "months" if temporal_resolution == "monthly" else "years"
+    ) if lag_steps > 0 else None
 
     output_path = save_npy(output_dir, variable_name, da_final) if save_output else None
+    reconstruction_supported = data_value_type in {"real", "anomaly"}
 
     result = {
         variable_name: {
             "logical_name": variable_name,
-            "array_path": str(output_path) if output_path is not None else None,
+            "array_path": str(output_path) if output_path else None,
             "load_metadata": load_meta_out,
             "processing": {
                 "temporal_resolution": temporal_resolution,
@@ -687,7 +772,7 @@ def _process_and_save_single_dataarray(
                 "require_full_years": require_full_years,
                 **preprocess_result.metadata,
                 "preprocess_products": preprocess_products,
-                "mask_dir": str(mask_dir) if mask_dir is not None else None,
+                "mask_dir": str(mask_dir) if mask_dir else None,
                 "is_lagged": variable_info["is_lagged"],
                 "lag_steps": lag_steps,
                 "lag_apply_stage": lag_apply_stage,
@@ -696,25 +781,33 @@ def _process_and_save_single_dataarray(
             },
             "grid": _grid_metadata(da_final),
             "temporal_grid": _temporal_metadata(da_final, temporal_resolution),
-            "final_dims": tuple(str(x) for x in da_final.dims),
-            "final_shape": tuple(int(x) for x in da_final.shape),
-            "final_time_min": str(pd.to_datetime(da_final["time"].values[0])) if da_final.sizes["time"] else None,
-            "final_time_max": str(pd.to_datetime(da_final["time"].values[-1])) if da_final.sizes["time"] else None,
+            "final_dims": tuple(str(value) for value in da_final.dims),
+            "final_shape": tuple(int(value) for value in da_final.shape),
+            "final_time_min": (
+                str(pd.to_datetime(da_final["time"].values[0]))
+                if da_final.sizes["time"] else None
+            ),
+            "final_time_max": (
+                str(pd.to_datetime(da_final["time"].values[-1]))
+                if da_final.sizes["time"] else None
+            ),
             "final_units": da_final.attrs.get("units", ""),
             "final_dtype": str(da_final.dtype),
             "reconstruction": {
-                "supported": bool(preprocess_result.metadata["preprocessing_applied"]),
+                "supported": reconstruction_supported,
                 "metadata_source": "metadata.json",
                 "order": preprocess_result.metadata["reconstruction_order"],
-                "products_root": str(Path(output_dir) / "preprocess" / variable_name),
+                "products_root": str(
+                    Path(output_dir) / "preprocess" / variable_name
+                ),
             },
         }
     }
 
     del da_agg, da_masked, da_final, combined_mask, preprocess_result
     gc.collect()
-
     return result
+
 
 def _process_and_save_multiclass_dataarray(
     da_raw,
@@ -723,6 +816,10 @@ def _process_and_save_multiclass_dataarray(
     meta_load: dict,
     mask_dir: str | Path | None = None,
     masks: dict | None = None,
+    binary_mask_metadata: dict[str, dict[str, Any]] | None = None,
+    categorical_masks: dict | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
+    categorical_mask_metadata: dict[str, dict[str, Any]] | None = None,
     temporal_resolution: str = "monthly",
     annual_rule: str | None = None,
     require_full_years: bool = True,
@@ -730,40 +827,29 @@ def _process_and_save_multiclass_dataarray(
     detrend_theil_sen: bool = False,
     save_output: bool = True,
 ) -> dict:
-    """Procesa una DataArray con dimensión 'class' y guarda una salida por clase."""
-
-    outputs = {}  # ← aquí guardaremos el resultado de cada clase por separado
-    last_mask_info = {}  # ← guardamos mask_info de la última iteración para devolverlo
-
-    classes = da_raw["class"].values  # ← extraemos los valores reales de las clases
-
-    for i, c in enumerate(classes):
-        da_class = da_raw.isel({"class": i})  
-        # ← seleccionamos una sola clase y eliminamos la dimensión 'class'
-
-        class_variable_name = f"{variable.upper()}_CLASS_{c}"
-        # ← construimos un nombre único para el npy de esta clase
-
-        class_result = _process_and_save_single_dataarray(
-            da_raw=da_class,
-            output_dir=output_dir,
-            variable_name=class_variable_name,
-            meta_load=meta_load,
-            mask_dir=mask_dir,
-            masks=masks,
-            temporal_resolution=temporal_resolution,
-            annual_rule=annual_rule,
-            require_full_years=require_full_years,
-            data_value_type=data_value_type,
-            detrend_theil_sen=detrend_theil_sen,
-            save_output=save_output,
+    outputs = {}
+    for index, class_value in enumerate(da_raw["class"].values):
+        class_name = f"{variable.upper()}_CLASS_{class_value}"
+        outputs.update(
+            _process_and_save_single_dataarray(
+                da_raw=da_raw.isel({"class": index}),
+                output_dir=output_dir,
+                variable_name=class_name,
+                meta_load=meta_load,
+                mask_dir=mask_dir,
+                masks=masks,
+                binary_mask_metadata=binary_mask_metadata,
+                categorical_masks=categorical_masks,
+                categorical_filters=categorical_filters,
+                categorical_mask_metadata=categorical_mask_metadata,
+                temporal_resolution=temporal_resolution,
+                annual_rule=annual_rule,
+                require_full_years=require_full_years,
+                data_value_type=data_value_type,
+                detrend_theil_sen=detrend_theil_sen,
+                save_output=save_output,
+            )
         )
-
-        outputs.update(class_result)
-
-        del da_class
-        gc.collect()
-
     return outputs
 
 
@@ -771,9 +857,12 @@ def load_and_save_variable(
     raw_dir: str | Path,
     output_dir: str | Path,
     variable: str,
+    variable_file_map: dict[str, str],
     mask_dir: str | Path | None = None,
+    binary_mask_file_map: dict[str, str] | None = None,
+    binary_mask_metadata: dict[str, dict[str, Any]] | None = None,
     mask_names: list[str] | None = None,
-    roi: ROI | None = None,
+    roi: ROI | dict[str, float] | None = None,
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
@@ -783,61 +872,79 @@ def load_and_save_variable(
     data_value_type: str = "real",
     detrend_theil_sen: bool = False,
     save_output: bool = True,
+    categorical_mask_file_map: dict[str, str] | None = None,
+    categorical_mask_metadata: dict[str, dict[str, Any]] | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
 ) -> dict:
     da_raw, meta_load = load_netcdf(
         base_dir=raw_dir,
         variable=variable,
+        variable_file_map=variable_file_map,
         roi=roi,
         start_year=start_year,
         end_year_inclusive=end_year_inclusive,
         dtype=dtype,
     )
 
-    masks = {}
-    if mask_names:
-        if mask_dir is None:
-            raise ValueError("Si usas mask_names, debes pasar mask_dir.")
-        for name in mask_names:
-            masks[name] = load_mask(
-                mask_dir,
-                name,
-                da_raw["latitude"].values,
-                da_raw["longitude"].values,
+    binary_masks: dict[str, xr.DataArray] = {}
+    for name in mask_names or []:
+        if mask_dir is None or binary_mask_file_map is None:
+            raise ValueError(
+                "Para usar máscaras binarias debes pasar mask_dir y "
+                "binary_mask_file_map."
             )
-            # ← aquí usamos da_raw, porque todavía no sabemos si la variable tiene class o no
+        binary_masks[name] = load_mask(
+            mask_dir,
+            name,
+            da_raw["latitude"].values,
+            da_raw["longitude"].values,
+            binary_mask_file_map,
+        )
+
+    categorical_masks: dict[str, xr.DataArray] = {}
+    for name, selected_classes in (categorical_filters or {}).items():
+        if not selected_classes:
+            continue
+        if mask_dir is None or categorical_mask_file_map is None:
+            raise ValueError(
+                "Para usar filtros categóricos debes pasar mask_dir y "
+                "categorical_mask_file_map."
+            )
+        categorical_masks[name] = load_mask(
+            mask_dir,
+            name,
+            da_raw["latitude"].values,
+            da_raw["longitude"].values,
+            categorical_mask_file_map,
+        )
+
+    common = dict(
+        output_dir=output_dir,
+        meta_load=meta_load,
+        mask_dir=mask_dir,
+        masks=binary_masks or None,
+        binary_mask_metadata=binary_mask_metadata,
+        categorical_masks=categorical_masks or None,
+        categorical_filters=categorical_filters,
+        categorical_mask_metadata=categorical_mask_metadata,
+        temporal_resolution=temporal_resolution,
+        annual_rule=annual_rule,
+        require_full_years=require_full_years,
+        data_value_type=data_value_type,
+        detrend_theil_sen=detrend_theil_sen,
+        save_output=save_output,
+    )
 
     if "class" in da_raw.dims:
         result = _process_and_save_multiclass_dataarray(
-            da_raw=da_raw,
-            output_dir=output_dir,
-            variable=variable,
-            meta_load=meta_load,
-            mask_dir=mask_dir,
-            masks=masks if masks else None,
-            temporal_resolution=temporal_resolution,
-            annual_rule=annual_rule,
-            require_full_years=require_full_years,
-            data_value_type=data_value_type,
-            detrend_theil_sen=detrend_theil_sen,
-            save_output=save_output,
+            da_raw=da_raw, variable=variable, **common
         )
     else:
         result = _process_and_save_single_dataarray(
-            da_raw=da_raw,
-            output_dir=output_dir,
-            variable_name=variable.upper(),
-            meta_load=meta_load,
-            mask_dir=mask_dir,
-            masks=masks if masks else None,
-            temporal_resolution=temporal_resolution,
-            annual_rule=annual_rule,
-            require_full_years=require_full_years,
-            data_value_type=data_value_type,
-            detrend_theil_sen=detrend_theil_sen,
-            save_output=save_output,
+            da_raw=da_raw, variable_name=variable.upper(), **common
         )
 
-    del da_raw, masks
+    del da_raw, binary_masks, categorical_masks
     gc.collect()
     return result
 
@@ -845,12 +952,14 @@ def load_and_save_variable(
 def build_processed_metadata(
     variable_results: dict[str, dict],
     temporal_resolution: str,
-    roi: ROI | None = None,
+    roi: ROI | dict[str, float] | None = None,
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
     data_value_type: str = "real",
     detrend_theil_sen: bool = False,
+    mask_names: list[str] | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
 ) -> dict:
     if temporal_resolution.lower() not in {"monthly", "annual"}:
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
@@ -860,16 +969,21 @@ def build_processed_metadata(
     return {
         "dataset_config": {
             "temporal_resolution": temporal_resolution.lower(),
-            "roi": roi,
+            "roi": _to_jsonable(roi),
             "start_year": start_year,
             "end_year_inclusive": end_year_inclusive,
             "dtype": dtype,
+            "mask_names": [str(name).lower() for name in (mask_names or [])],
+            "categorical_filters": {
+                str(name).lower(): sorted({int(value) for value in values})
+                for name, values in (categorical_filters or {}).items()
+            },
             **preprocess.validate_preprocess_options(
                 data_value_type=data_value_type,
                 detrend_theil_sen=detrend_theil_sen,
             ),
         },
-        "variables": {k.upper(): v for k, v in variable_results.items()},
+        "variables": {key.upper(): value for key, value in variable_results.items()},
     }
 
 
@@ -877,13 +991,15 @@ def save_processed_metadata(
     output_dir: str | Path,
     variable_results: dict[str, dict],
     temporal_resolution: str,
-    roi: ROI | None = None,
+    roi: ROI | dict[str, float] | None = None,
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
     data_value_type: str = "real",
     detrend_theil_sen: bool = False,
     filename: str = "metadata.json",
+    mask_names: list[str] | None = None,
+    categorical_filters: dict[str, list[int]] | None = None,
 ) -> Path:
     metadata = build_processed_metadata(
         variable_results=variable_results,
@@ -894,8 +1010,11 @@ def save_processed_metadata(
         dtype=dtype,
         data_value_type=data_value_type,
         detrend_theil_sen=detrend_theil_sen,
+        mask_names=mask_names,
+        categorical_filters=categorical_filters,
     )
     return save_metadata_json(output_dir, metadata, filename)
+
 
 def build_processed_run_config(
     variable_names: list[str],
@@ -904,23 +1023,27 @@ def build_processed_run_config(
     start_year: int | None = None,
     end_year_inclusive: int | None = None,
     dtype: str = "float32",
-    roi: ROI | None = None,
+    roi: ROI | dict[str, float] | None = None,
     data_value_type: str = "real",
     detrend_theil_sen: bool = False,
+    categorical_filters: dict[str, list[int]] | None = None,
 ) -> dict:
-    options = preprocess.validate_preprocess_options(
-        data_value_type=data_value_type,
-        detrend_theil_sen=detrend_theil_sen,
-    )
     return {
-        "variable_names": [str(v).upper() for v in variable_names],
+        "variable_names": [str(value).upper() for value in variable_names],
         "temporal_resolution": temporal_resolution.lower().strip(),
-        "mask_names": [str(m).lower().strip() for m in (mask_names or [])],
+        "mask_names": [str(value).lower().strip() for value in (mask_names or [])],
+        "categorical_filters": {
+            str(name).lower(): sorted({int(value) for value in values})
+            for name, values in (categorical_filters or {}).items()
+        },
         "start_year": start_year,
         "end_year_inclusive": end_year_inclusive,
         "dtype": str(dtype),
         "roi": _to_jsonable(roi),
-        **options,
+        **preprocess.validate_preprocess_options(
+            data_value_type=data_value_type,
+            detrend_theil_sen=detrend_theil_sen,
+        ),
     }
 
 

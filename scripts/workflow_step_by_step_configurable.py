@@ -100,7 +100,11 @@ def add_optional_landcover_to_predictions(
     latitude_values: np.ndarray,
     longitude_values: np.ndarray,
 ) -> pd.DataFrame:
-    mask_path = Path(cfg["mask_dir"]) / io.MASK_MAP["landcover"]
+    landcover_map = cfg["data"].get("categorical_mask_file_map", {})
+    if "landcover" not in landcover_map:
+        LOGGER.info("Landcover mask is not registered; skipping annotations")
+        return prediction_df
+    mask_path = Path(cfg["mask_dir"]) / landcover_map["landcover"]
     if not mask_path.exists():
         LOGGER.info("Landcover mask not found at %s; skipping landcover annotations", mask_path)
         return prediction_df
@@ -111,8 +115,12 @@ def add_optional_landcover_to_predictions(
             mask_name="landcover",
             latitude=latitude_values,
             longitude=longitude_values,
+            mask_file_map=landcover_map,
         )
-        landcover_labels = load_landcover_labels(Path(cfg["mask_dir"]))
+        classes = cfg["data"].get("categorical_mask_metadata", {}).get("landcover", {}).get("classes", {})
+        landcover_labels = {int(key): str(value) for key, value in classes.items()}
+        if not landcover_labels:
+            landcover_labels = load_landcover_labels(Path(cfg["mask_dir"]))
         prediction_df = prediction_df.copy()
         prediction_df["landcover_code"] = [
             int(landcover_mask.values[int(i), int(j)])
@@ -183,7 +191,7 @@ def preprocess_variables(cfg: dict) -> Path:
         dtype=data_cfg["dtype"],
         roi=data_cfg["roi"],
         data_value_type=data_cfg["data_value_type"],
-        detrend_theil_sen=data_cfg["detrend_theil_sen"],
+        categorical_filters=data_cfg["categorical_filters"],
     )
     status = io.processed_run_status(
         output_dir=output_dir,
@@ -206,7 +214,10 @@ def preprocess_variables(cfg: dict) -> Path:
                 raw_dir=data_cfg["raw_dir"],
                 output_dir=output_dir,
                 variable=variable,
+                variable_file_map=data_cfg["variable_file_map"],
                 mask_dir=data_cfg["mask_dir"],
+                binary_mask_file_map=data_cfg["binary_mask_file_map"],
+                binary_mask_metadata=data_cfg["binary_mask_metadata"],
                 mask_names=data_cfg["mask_names"],
                 roi=data_cfg["roi"],
                 start_year=data_cfg["start_year"],
@@ -214,8 +225,10 @@ def preprocess_variables(cfg: dict) -> Path:
                 dtype=data_cfg["dtype"],
                 temporal_resolution=data_cfg["temporal_resolution"],
                 data_value_type=data_cfg["data_value_type"],
-                detrend_theil_sen=data_cfg["detrend_theil_sen"],
                 save_output=True,
+                categorical_mask_file_map=data_cfg["categorical_mask_file_map"],
+                categorical_mask_metadata=data_cfg["categorical_mask_metadata"],
+                categorical_filters=data_cfg["categorical_filters"],
             )
         )
 
@@ -228,7 +241,8 @@ def preprocess_variables(cfg: dict) -> Path:
         end_year_inclusive=data_cfg["end_year_inclusive"],
         dtype=data_cfg["dtype"],
         data_value_type=data_cfg["data_value_type"],
-        detrend_theil_sen=data_cfg["detrend_theil_sen"],
+        mask_names=data_cfg["mask_names"],
+        categorical_filters=data_cfg["categorical_filters"],
     )
     io.save_metadata_json(output_dir, expected_run_config, filename="run_config.json")
     LOGGER.info("Preprocessed data saved in %s", output_dir)

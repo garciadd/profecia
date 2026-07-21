@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.data.io import MASK_MAP, load_mask
+from src.data.io import load_mask
 from src.evaluation.regression import build_prediction_dataframe
 from src.explainability.shap import run_shap_analysis
 from src.project_config import resolve_train_config
@@ -99,31 +99,32 @@ def configure_logging(log_file: Path) -> None:
     root_logger.addHandler(stream_handler)
 
 
-def load_label_maps(mask_dir: Path) -> tuple[dict[int, str], dict[int, str]]:
-    mask_metadata_path = mask_dir / "mask_metadata.json"
-    try:
-        if not mask_metadata_path.exists():
-            LOGGER.info("No %s found; using default climate/landcover labels", mask_metadata_path)
-            return DEFAULT_MACRO_LABELS, DEFAULT_LANDCOVER_LABELS
+def load_label_maps(cfg: dict[str, Any]) -> tuple[dict[int, str], dict[int, str]]:
+    metadata = cfg["data"].get("categorical_mask_metadata", {})
+    climate_classes = metadata.get("climate", {}).get("classes", {})
+    landcover_classes = metadata.get("landcover", {}).get("classes", {})
 
-        with open(mask_metadata_path, "r", encoding="utf-8") as f:
-            mask_metadata = json.load(f)
-    except PermissionError:
-        LOGGER.warning(
-            "Permission denied while reading %s; continuing with default climate/landcover labels",
-            mask_metadata_path,
-        )
-        return DEFAULT_MACRO_LABELS, DEFAULT_LANDCOVER_LABELS
-
-    macro_labels = {int(k): v for k, v in mask_metadata["masks"]["climate"]["labels"].items()}
-    landcover_labels = {int(k): v for k, v in mask_metadata["masks"]["landcover"]["labels"].items()}
-    return macro_labels, landcover_labels
+    macro_labels = {int(key): str(value) for key, value in climate_classes.items()}
+    landcover_labels = {int(key): str(value) for key, value in landcover_classes.items()}
+    return (
+        macro_labels or dict(DEFAULT_MACRO_LABELS),
+        landcover_labels or dict(DEFAULT_LANDCOVER_LABELS),
+    )
 
 
-def load_available_masks(mask_dir: Path, latitude_values: np.ndarray, longitude_values: np.ndarray) -> dict[str, Any]:
+def load_available_masks(
+    cfg: dict[str, Any],
+    mask_dir: Path,
+    latitude_values: np.ndarray,
+    longitude_values: np.ndarray,
+) -> dict[str, Any]:
     available_masks: dict[str, Any] = {}
-    for mask_name in ["climate", "landcover"]:
-        mask_path = mask_dir / MASK_MAP[mask_name]
+    mask_file_map = cfg["data"].get("categorical_mask_file_map", {})
+
+    for mask_name in ("climate", "landcover"):
+        if mask_name not in mask_file_map:
+            continue
+        mask_path = mask_dir / mask_file_map[mask_name]
         try:
             if not mask_path.exists():
                 LOGGER.info("Mask %s not found; skipping", mask_path)
@@ -133,10 +134,11 @@ def load_available_masks(mask_dir: Path, latitude_values: np.ndarray, longitude_
                 mask_name=mask_name,
                 latitude=latitude_values,
                 longitude=longitude_values,
+                mask_file_map=mask_file_map,
             )
         except PermissionError:
             LOGGER.warning("Permission denied while reading mask %s; skipping", mask_path)
-            continue
+
     return available_masks
 
 
@@ -305,14 +307,21 @@ def main() -> int:
     if feature_names is None or len(feature_names) != X_test.shape[1]:
         feature_names = [f"f{i}" for i in range(X_test.shape[1])]
 
-    latitude_size = int(dataset_metadata["latitude_size"])
-    longitude_size = int(dataset_metadata["longitude_size"])
-    latitude_values = np.linspace(-89.75, 89.75, latitude_size, dtype=np.float32)
-    longitude_values = np.linspace(-179.75, 179.75, longitude_size, dtype=np.float32)
+    processed_metadata_path = Path(cfg["processed_dir"]) / "metadata.json"
+    with open(processed_metadata_path, "r", encoding="utf-8") as file:
+        processed_metadata = json.load(file)
+    grid = processed_metadata["variables"][cfg["target_name"]]["grid"]
+    latitude_values = grid["lat_min"] + np.arange(grid["latitude_size"]) * grid["latitude_resolution_deg"]
+    longitude_values = grid["lon_min"] + np.arange(grid["longitude_size"]) * grid["longitude_resolution_deg"]
     time_values = pd.to_datetime(dataset_metadata["time_values"])
 
-    macro_labels, landcover_labels = load_label_maps(masks_dir)
-    available_masks = load_available_masks(masks_dir, latitude_values, longitude_values)
+    macro_labels, landcover_labels = load_label_maps(cfg)
+    available_masks = load_available_masks(
+        cfg,
+        masks_dir,
+        latitude_values,
+        longitude_values,
+    )
 
     prepare_t0 = time.perf_counter()
     X_test_used = maybe_scale_features(scaler, X_test)

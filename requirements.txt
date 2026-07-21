@@ -5,13 +5,19 @@ netcdf4
 h5netcdf
 dask
 matplotlib
+pillow
 scipy
 statsmodels
 scikit-learn==1.8.0
-jupyter
-notebook
-ipykernel
-mlflow
 shap
-tomli
+seaborn
 geopandas
+ipywidgets
+ipyleaflet
+ipykernel
+jupyter
+jupyterlab
+notebook
+tomli; python_version < "3.11"
+tomli-w
+mlflow
