@@ -1,0 +1,135 @@
+# Catálogo de rutas, variables, archivos y máscaras disponibles para PROFECIA.
+
+[paths]
+project_dir = "/home/dani/github/profecia"
+data_dir = "/home/dani/github/data/profecia/datasets"
+processed_base_dir = "/home/dani/github/data/profecia/processed"
+mask_dir = "/home/dani/github/data/profecia/datasets/masks"
+
+[files.target]
+LAI = "target/lai_1982_2022_monthly_0.5deg.nc"
+
+[files.climatic]
+SM1 = "climatic/swvl1_1982_2022_monthly_0.5deg.nc"
+SM2 = "climatic/subswc_1982_2022_monthly_0.5deg.nc"
+SM1_2 = "climatic/swvl1_2_1982_2022_monthly_0.5deg.nc"
+TP = "climatic/tp_1982_2022_monthly_0.5deg.nc"
+T2M = "climatic/t2m_1982_2022_monthly_0.5deg.nc"
+SSRD = "climatic/ssrd_1982_2022_monthly_0.5deg.nc"
+VPD = "climatic/vpd_1982_2022_monthly_0.5deg.nc"
+D2M = "climatic/d2m_1982_2022_monthly_0.5deg.nc"
+PEV = "climatic/pev_1982_2022_monthly_0.5deg.nc"
+WIND = "climatic/wind_1982_2022_monthly_0.5deg.nc"
+SPEI = "climatic/spei06_univariable_1982_2022_monthly_0.5deg.nc"
+
+[files.human]
+CO2 = "human/co2_1982_2022_annual_0.5deg.nc"
+HFP = "human/hfp_1982_2022_annual_0.5deg.nc"
+NDEP = "human/ndep_1982_2022_annual_0.5deg.nc"
+TLU = "human/tlu_1982_2022_annual_0.5deg.nc"
+
+[files.soil]
+ELEVATION = "soil/elevation_1982_2022_monthly_0.5deg.nc"
+PH = "soil/ph_1982_2022_monthly_0.5deg.nc"
+RICHNESS = "soil/richness_1982_2022_monthly_0.5deg.nc"
+BULK = "soil/bulk_1982_2022_monthly_0.5deg.nc"
+CEC = "soil/cec_1982_2022_monthly_0.5deg.nc"
+CLAY = "soil/clay_1982_2022_monthly_0.5deg.nc"
+SAND = "soil/sand_1982_2022_monthly_0.5deg.nc"
+SILT = "soil/silt_1982_2022_monthly_0.5deg.nc"
+SOC = "soil/soc_1982_2022_monthly_0.5deg.nc"
+TOTAL_N = "soil/total_n_1982_2022_monthly_0.5deg.nc"
+
+#[files.landcover]
+#LC_STATIC = "landcover_static_1982_2022_monthly_0.5deg.nc"
+#LC_3CLASS = "landcover_3classes_1982_2022_annual_0.5deg.nc"
+#LC_7CLASS = "landcover_7classes_1982_2022_annual_0.5deg.nc"
+
+[files.masks.binary]
+land = "land_mask_0p5deg.npy"
+ebf = "ebf_mask_0p5deg.npy"
+bs = "bs_mask_0p5deg.npy"
+#deserts = "deserts_mask_0p5deg.npy"
+snow_ice = "snow_ice_mask_0p5deg.npy"
+
+[files.masks.categorical]
+climate = "climate_mask_0p5_5macroclasses.npy"
+landcover = "landcover_mask_0p5_7classes.npy"
+
+# Máscaras binarias.
+# mode = "include": la máscara indica las celdas que se conservan.
+# mode = "exclude": la máscara indica las celdas que se eliminan.
+
+[masks.binary.land]
+label = "Tierra"
+description = "Mantiene únicamente celdas terrestres y elimina océano."
+mode = "include"
+default = true
+enabled = true
+
+[masks.binary.ebf]
+label = "Bosque tropical perenne"
+description = "Excluye regiones evergreen broadleaf forest del dominio efectivo."
+mode = "exclude"
+default = false
+enabled = true
+
+[masks.binary.bs]
+label = "Bare soil"
+description = "Excluye regiones de suelo desnudo o vegetación escasa."
+mode = "exclude"
+default = false
+enabled = true
+
+#[masks.binary.deserts]
+#label = "Desiertos"
+#description = "Excluye regiones desérticas."
+#mode = "exclude"
+#default = false
+#enabled = true
+
+[masks.binary.snow_ice]
+label = "Nieve y hielo"
+description = "Excluye regiones cubiertas por nieve o hielo."
+mode = "exclude"
+default = false
+enabled = true
+
+# Máscaras categóricas.
+# Sin clases seleccionadas = no se aplica ese filtro.
+# Con clases seleccionadas = se conservan únicamente esas clases y se elimina el resto.
+
+[masks.categorical.climate]
+label = "Clima"
+description = "Conserva únicamente las clases climáticas seleccionadas."
+enabled = true
+default_selected = []
+
+[masks.categorical.climate.classes]
+"1" = "Tropical"
+"2" = "Árido"
+"3" = "Templado"
+"4" = "Frío"
+"5" = "Polar"
+
+[masks.categorical.landcover]
+label = "Cobertura del suelo"
+description = "Conserva únicamente las clases de cobertura seleccionadas."
+enabled = true
+default_selected = []
+
+[masks.categorical.landcover.classes]
+"10" = "Cropland"
+"20" = "Forest"
+"30" = "Grassland"
+"40" = "Shrubland"
+"70" = "Tundra"
+"90" = "Barren"
+"100" = "Snow/Ice"
+
+[mlflow]
+enabled = false
+tracking_uri="https://mlflow.cloud.ai4eosc.eu/"
+tracking_username="aguilarf@ifca.unican.es"
+tracking_password=""
+experiment_name="land_without_lag"
