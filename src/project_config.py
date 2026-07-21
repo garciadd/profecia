@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-import tomllib
+import os
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
+from src.reproducibility.config import ReproducibilityConfig
+
+
+_PATH_KEYS = {
+    "main_dir", "raw_dir", "processed_base_dir", "processed_dir", "mask_dir",
+    "output_dir", "model_base_root_dir", "model_base_dir", "model_dir",
+    "model_data_dir", "model_artifacts_dir", "model_figures_dir",
+}
 
 
 def _load_toml(path: str | Path) -> dict:
@@ -169,6 +183,27 @@ def resolve_train_config(config_path: str | Path = "config/train.toml") -> dict:
     cv_raw = raw.get("cv", {})
     cv_search_space = dict(cv_raw.get("search_space", {}).get(model_name, {}))
 
+    reproducibility = ReproducibilityConfig.from_mapping(
+        raw.get("reproducibility"),
+        base_dir=Path.cwd(),
+    )
+    if reproducibility.input_catalogue is None:
+        reproducibility = ReproducibilityConfig(
+            create_rocrate=reproducibility.create_rocrate,
+            reproducible_run=reproducibility.reproducible_run,
+            output_dir=reproducibility.output_dir,
+            upstream_rocrate=reproducibility.upstream_rocrate,
+            input_catalogue=data_cfg_path,
+            model_artifact=reproducibility.model_artifact,
+            croissant=reproducibility.croissant,
+            code=reproducibility.code,
+            licenses=reproducibility.licenses,
+            environment=reproducibility.environment,
+            upstream=reproducibility.upstream,
+            inputs=reproducibility.inputs,
+            verification=reproducibility.verification,
+        )
+
     cfg = {
         "config_path": str(config_path),
         "data_config_path": str(data_cfg_path),
@@ -183,6 +218,7 @@ def resolve_train_config(config_path: str | Path = "config/train.toml") -> dict:
         "predictor_names": list(data_cfg["predictor_names"]),
         "mlflow": dict(data_cfg["mlflow"]),
         "explainability": _resolve_explainability_config(raw),
+        "reproducibility": reproducibility,
         "split_mode": split_mode,
         "train_fraction": train_fraction,
         "test_fraction": test_fraction,
@@ -212,4 +248,57 @@ def resolve_train_config(config_path: str | Path = "config/train.toml") -> dict:
     cfg["model_data_dir"] = cfg["model_dir"] / "data"
     cfg["model_artifacts_dir"] = cfg["model_dir"] / "artifacts"
     cfg["model_figures_dir"] = cfg["model_dir"] / "figures"
+    reproduction_work_dir = os.getenv("PROFECIA_WORK_DIR")
+    if reproduction_work_dir:
+        work = Path(reproduction_work_dir).resolve()
+        cfg["raw_dir"] = work / "inputs"
+        cfg["mask_dir"] = work / "derived-inputs" / "masks"
+        cfg["processed_dir"] = work / "processed"
+        cfg["data"]["raw_dir"] = cfg["raw_dir"]
+        cfg["data"]["mask_dir"] = cfg["mask_dir"]
+        cfg["data"]["output_dir"] = cfg["processed_dir"]
+        cfg["model_base_root_dir"] = work / "outputs"
+        cfg["model_base_dir"] = cfg["model_base_root_dir"] / cfg["model_run_name"]
+        cfg["model_dir"] = cfg["model_base_dir"] / cfg["split_mode"]
+        cfg["model_data_dir"] = cfg["model_dir"] / "data"
+        cfg["model_artifacts_dir"] = cfg["model_dir"] / "artifacts"
+        cfg["model_figures_dir"] = cfg["model_dir"] / "figures"
+    return cfg
+
+
+def resolve_effective_train_config(config_path: str | Path, work_dir: str | Path) -> dict:
+    """Load the redacted, fully resolved configuration packaged for reproduction."""
+    import json
+
+    config_path = Path(config_path).resolve()
+    crate_dir = config_path.parent.parent
+    work = Path(work_dir).resolve()
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if raw.get("effective_config_format") != "profecia-reproducibility-1":
+        raise ValueError(f"Unsupported effective configuration format: {config_path}")
+
+    def restore(value):
+        if isinstance(value, dict):
+            return {key: restore(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [restore(item) for item in value]
+        if isinstance(value, str):
+            return value.replace("${WORK_DIR}", str(work))
+        return value
+
+    cfg = restore(raw)
+    cfg.pop("effective_config_format", None)
+    cfg.pop("work_dir_variable", None)
+    for key in _PATH_KEYS:
+        if cfg.get(key):
+            cfg[key] = Path(cfg[key])
+    if isinstance(cfg.get("data"), dict):
+        for key in _PATH_KEYS:
+            if cfg["data"].get(key):
+                cfg["data"][key] = Path(cfg["data"][key])
+    cfg["config_path"] = str(crate_dir / "config" / "train.toml")
+    cfg["data_config_path"] = str(crate_dir / "config" / "data.toml")
+    cfg["reproducibility"] = ReproducibilityConfig.from_mapping(
+        cfg.get("reproducibility"), base_dir=crate_dir
+    )
     return cfg

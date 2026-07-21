@@ -26,9 +26,11 @@ dependencies = [
     "ipykernel",
     "mlflow",
     "shap",
-    "seaborn"
+    "seaborn",
+    "pyarrow",
+    "rdflib"
     ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "profecia*"]

@@ -1,0 +1,62 @@
+# Copiar esta sección a config/train.toml. Está desactivada por defecto.
+[reproducibility]
+create_rocrate = true
+reproducible_run = true
+output_dir = "outputs/ro-crates"
+input_catalogue = "config/data.toml"
+
+[reproducibility.upstream]
+identifier = "https://doi.org/10.example/profecia-preprocessing-v1"
+landing_page = "https://example.org/releases/preprocessing/v1"
+metadata_url = "https://example.org/releases/preprocessing/v1/ro-crate-metadata.json"
+archive_url = ""
+cache_dir = "./cache/upstream"
+download_missing = true
+verify_checksums = true
+offline = false
+
+[reproducibility.inputs]
+require_upstream_checksum = true
+allow_derived_local_inputs = true
+
+[reproducibility.model_artifact]
+# attached copia el modelo; external lo referencia; metadata_only no lo publica.
+mode = "metadata_only"
+download_url = ""
+landing_page = ""
+identifier = ""
+
+[reproducibility.croissant]
+# descriptive no copia NPY ni declara observaciones cargables.
+mode = "descriptive"
+include_split_manifest = true
+split_manifest_format = "npz"
+
+[reproducibility.code]
+# reference no copia código; patch conserva el diff y los no versionados;
+# snapshot copia el árbol Git versionado completo.
+mode = "reference"
+require_clean_repository = true
+
+[reproducibility.licenses]
+metadata = "https://spdx.org/licenses/CC0-1.0.html"
+code = ""
+model = ""
+results = ""
+derived_dataset = ""
+
+[reproducibility.environment]
+lock_file = "uv.lock"
+container_image = ""
+container_digest = ""
+container_platform = ""
+container_runtime = ""
+python_version = ""
+
+[reproducibility.verification]
+expected_results = "reproducibility/expected_results.json"
+fail_on_metric_difference = true
+metric_absolute_tolerance = 0.0001
+
+# Los alias de ficheros upstream se declaran en input_catalogue mediante
+# [variables.<NOMBRE>] y [masks.<nombre>]; consulte docs/reproducibility.md.

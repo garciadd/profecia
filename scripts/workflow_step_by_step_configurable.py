@@ -51,7 +51,9 @@ from src.evaluation.visualization import (
     plot_observation_bundle,
     run_observation_category_analysis,
 )
-from src.project_config import resolve_train_config
+from src.project_config import resolve_effective_train_config, resolve_train_config
+from src.reproducibility import create_training_rocrate
+from src.training.dataset import masks_from_split_manifest
 from src.training.dataset import export_train_test_data
 from src.training.hyperparam_search import run_hyperparameter_search
 from src.training.split import make_train_test_split
@@ -65,6 +67,7 @@ from src.training.train import (
 LOGGER = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(os.getenv("PROFECIA_TRAIN_CONFIG", "config/train.toml"))
+EFFECTIVE_CONFIG_PATH = os.getenv("PROFECIA_EFFECTIVE_CONFIG")
 STOP_ON_ERROR = os.getenv("PROFECIA_STOP_ON_ERROR", "true").lower().strip() not in {"0", "false", "no"}
 
 
@@ -149,6 +152,24 @@ def save_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(io._to_jsonable(payload), f, ensure_ascii=False, indent=2)
+
+
+def redact_sensitive_config(value):
+    """Return a logging-safe copy of nested configuration values."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                "***REDACTED***"
+                if any(token in str(key).lower() for token in ("password", "passwd", "token", "secret", "api_key"))
+                else redact_sensitive_config(nested)
+            )
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_config(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_config(item) for item in value)
+    return value
 
 
 def build_mlflow_config(cfg: dict) -> dict | None:
@@ -262,15 +283,25 @@ def build_split_and_export(cfg: dict, processed_dir: Path) -> tuple[dict, dict]:
             predictors[expanded_name] = data_dict[expanded_name]
 
     LOGGER.info("Building split mode=%s", cfg["split_mode"])
-    split_result = make_train_test_split(
-        split_mode=cfg["split_mode"],
-        target=target,
-        predictors=predictors,
-        train_fraction=cfg["train_fraction"],
-        test_fraction=cfg["test_fraction"],
-        seed=cfg["seed"],
-        min_valid_fraction=cfg["min_valid_fraction"],
-    )
+    persisted_split = os.getenv("PROFECIA_SPLIT_MANIFEST")
+    if persisted_split:
+        if os.getenv("PROFECIA_RECOMPUTE_SPLIT", "0") == "1":
+            LOGGER.warning("Recomputing split explicitly; this is not an exact split reproduction")
+            persisted_split = None
+        else:
+            train_mask, test_mask, split_metadata = masks_from_split_manifest(target, persisted_split)
+            split_result = {"train_mask": train_mask, "test_mask": test_mask, "metadata": split_metadata}
+            LOGGER.info("Applied exact persisted train/test split from %s", persisted_split)
+    if not persisted_split:
+        split_result = make_train_test_split(
+            split_mode=cfg["split_mode"],
+            target=target,
+            predictors=predictors,
+            train_fraction=cfg["train_fraction"],
+            test_fraction=cfg["test_fraction"],
+            seed=cfg["seed"],
+            min_valid_fraction=cfg["min_valid_fraction"],
+        )
 
     extra_masks = {
         key: value
@@ -589,10 +620,17 @@ def evaluate_model(cfg: dict, bundle: dict, train_result: dict) -> dict:
 
 
 def run() -> dict:
-    cfg = resolve_train_config(CONFIG_PATH)
+    started_at = datetime.now(UTC)
+    if EFFECTIVE_CONFIG_PATH:
+        reproduction_work_dir = os.getenv("PROFECIA_WORK_DIR")
+        if not reproduction_work_dir:
+            raise ValueError("PROFECIA_EFFECTIVE_CONFIG requires PROFECIA_WORK_DIR")
+        cfg = resolve_effective_train_config(EFFECTIVE_CONFIG_PATH, reproduction_work_dir)
+    else:
+        cfg = resolve_train_config(CONFIG_PATH)
     log_path = configure_logging(cfg)
     LOGGER.info("Log file: %s", log_path)
-    LOGGER.info("Resolved config: %s", pformat(cfg))
+    LOGGER.info("Resolved config: %s", pformat(redact_sensitive_config(cfg)))
 
     processed_dir = preprocess_variables(cfg)
     bundle, dataset_metadata = build_split_and_export(cfg, processed_dir)
@@ -600,12 +638,14 @@ def run() -> dict:
     evaluation = evaluate_model(cfg, bundle, train_result)
 
     summary = {
+        "started_at_utc": started_at.isoformat(),
         "executed_at_utc": datetime.now(UTC).isoformat(),
         "config_path": str(CONFIG_PATH),
         "processed_dir": str(processed_dir),
         "model_data_dir": str(cfg["model_data_dir"]),
         "model_artifacts_dir": str(cfg["model_artifacts_dir"]),
         "model_figures_dir": str(cfg["model_figures_dir"]),
+        "log_path": str(log_path),
         "split_mode": cfg["split_mode"],
         "dataset_metadata": dataset_metadata,
         "train_info": train_result["train_info"],
@@ -615,6 +655,26 @@ def run() -> dict:
     summary_path = cfg["model_dir"] / "workflow_step_by_step_summary.json"
     save_json(summary_path, summary)
     LOGGER.info("Workflow summary saved in %s", summary_path)
+
+    if cfg["reproducibility"].create_rocrate and os.getenv("PROFECIA_REPRODUCTION_MODE") != "1":
+        try:
+            crate_dir = create_training_rocrate(
+                cfg=cfg,
+                summary=summary,
+                started_at=started_at,
+                ended_at=datetime.now(UTC),
+                command=[sys.executable, *sys.argv],
+                project_root=PROJECT_ROOT,
+            )
+            summary["rocrate"] = {"status": "created", "path": str(crate_dir)}
+        except Exception as exc:
+            summary["rocrate"] = {"status": "failed", "error": str(exc)}
+            LOGGER.exception(
+                "Training completed, but RO-Crate generation failed. The trained model remains valid."
+            )
+    else:
+        summary["rocrate"] = {"status": "disabled"}
+    save_json(summary_path, summary)
     return summary
 
 

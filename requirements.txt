@@ -15,3 +15,5 @@ mlflow
 shap
 tomli
 geopandas
+pyarrow
+rdflib

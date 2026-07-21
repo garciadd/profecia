@@ -17,7 +17,94 @@ target_name = "LAI"
 
 # roi = { lat_min = -60.0, lat_max = 80.0, lon_min = -180.0, lon_max = 180.0 }
 # Si no se define, se usa todo el globo disponible.
+# Explicit upstream aliases for published files whose canonical names differ
+# from the local training catalogue.
+[variables.LAI]
+role = "target"
+local_file = "lai_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "https://w3id.org/ro-id/3d017e40-856a-443b-b12c-bc6180e3791d/resources/a96e7719-814f-414e-810a-f3e4304941f2"
+frequency = "monthly"
+required = true
 
+[variables.T2M]
+role = "predictor"
+local_file = "t2m_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/era5_single_levels_t2m_monthly_0.5deg.nc"
+netcdf_variable = "t2m"
+frequency = "monthly"
+required = true
+
+[variables.TP]
+role = "predictor"
+local_file = "tp_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/era5_single_levels_tp_monthly_0.5deg.nc"
+netcdf_variable = "tp"
+frequency = "monthly"
+required = true
+
+[variables.SSRD]
+role = "predictor"
+local_file = "ssrd_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/era5_single_levels_ssrd_monthly_0.5deg.nc"
+netcdf_variable = "ssrd"
+frequency = "monthly"
+required = true
+
+[variables."SM1-2"]
+role = "predictor"
+local_file = "swvl1-2_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/swvl1-2_1982_2022_monthly_0.5deg.nc"
+frequency = "monthly"
+required = true
+
+[variables.PH]
+role = "predictor"
+local_file = "soil/ph_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/ph_1982_2022_monthly_0.5deg.nc"
+frequency = "monthly"
+required = true
+
+[variables.RICHNESS]
+role = "predictor"
+local_file = "soil/richness_1982_2022_monthly_0.5deg.nc"
+upstream_entity_id = "referenced-data/monthly/richness_1982_2022_monthly_0.5deg.nc"
+frequency = "monthly"
+required = true
+
+[variables.CO2]
+role = "predictor"
+local_file = "../annual/human/co2_1982_2022_annual_0.5deg.nc"
+upstream_entity_id = "referenced-data/annual/co2_1982_2022_annual_0.5deg.nc"
+frequency = "annual"
+required = true
+
+[masks.land]
+role = "mask"
+local_file = "land_mask_0p5deg.npy"
+upstream_entity_id = "https://w3id.org/ro-id/3d017e40-856a-443b-b12c-bc6180e3791d/resources/790dd6ee-2503-4ad8-b9d3-fc2eaad46b5c"
+required = true
+
+[masks.ebf]
+role = "mask"
+local_file = "ebf_mask_0p5deg.npy"
+upstream_entity_id = "https://w3id.org/ro-id/3d017e40-856a-443b-b12c-bc6180e3791d/resources/d68a892c-dfb6-41fb-9e45-28e96ea551ba"
+required = true
+
+[masks.bs]
+role = "mask"
+local_file = "bs_mask_0p5deg.npy"
+upstream_entity_id = "https://w3id.org/ro-id/3d017e40-856a-443b-b12c-bc6180e3791d/resources/3fa0d790-da60-4be7-93f8-91ee61bf44eb"
+required = true
+
+[masks.landcover_snow_ice]
+role = "mask"
+local_file = "landcover_snow_ice_0p5deg.npy"
+source_local_file = "landcover_mask_0p5_7classes.npy"
+derived_from_upstream_entity_id = "https://w3id.org/ro-id/3d017e40-856a-443b-b12c-bc6180e3791d/resources/cd6a11c1-91f5-42d7-9103-41c94fbf8348"
+derivation_type = "class_selection"
+class_value = 100
+class_label = "Snow/Ice"
+required = true
 [mlflow]
 enabled = false
 tracking_uri="https://mlflow.cloud.ai4eosc.eu/"

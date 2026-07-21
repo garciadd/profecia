@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
+from src.reproducibility.run_metadata import unflatten_observation_indices
+
 
 def _infer_temporal_resolution(time_values: np.ndarray) -> str:
     time_values = pd.to_datetime(time_values)
@@ -45,6 +47,43 @@ def _validate_inputs(
         raise ValueError("train_mask y test_mask deben tener las mismas dimensiones.")
     if np.any(train_mask.values & test_mask.values):
         raise ValueError("Train/Test se solapan.")
+
+
+def masks_from_split_manifest(
+    target: xr.DataArray, manifest_path: str | Path, metadata_path: str | Path | None = None
+) -> tuple[xr.DataArray, xr.DataArray, dict[str, Any]]:
+    """Reconstruct the exact persisted train/test masks without random resampling."""
+    manifest_path = Path(manifest_path)
+    metadata_path = Path(metadata_path) if metadata_path else manifest_path.with_suffix(".json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    shape = (target.sizes["time"], target.sizes["latitude"], target.sizes["longitude"])
+    expected_shape = (
+        int(metadata["time_size"]), int(metadata["latitude_size"]), int(metadata["longitude_size"])
+    )
+    if shape != expected_shape:
+        raise ValueError(f"Split manifest grid {expected_shape} does not match reconstructed data {shape}")
+    with np.load(manifest_path, allow_pickle=False) as payload:
+        train_indices = payload["train_indices"]
+        test_indices = payload["test_indices"]
+    if len(np.unique(train_indices)) != len(train_indices) or len(np.unique(test_indices)) != len(test_indices):
+        raise ValueError("Split manifest contains duplicate indices")
+    if np.intersect1d(train_indices, test_indices, assume_unique=False).size:
+        raise ValueError("Split manifest train/test indices overlap")
+    masks = []
+    for indices in (train_indices, test_indices):
+        time_idx, lat_idx, lon_idx = unflatten_observation_indices(
+            indices, shape[1], shape[2], shape[0]
+        )
+        values = np.zeros(shape, dtype=bool)
+        values[time_idx.astype(int), lat_idx.astype(int), lon_idx.astype(int)] = True
+        masks.append(xr.DataArray(values, coords=target.coords, dims=target.dims))
+    split_metadata = {
+        "split_mode": "persisted_manifest", "seed": metadata.get("seed"),
+        "n_selected_observations": len(train_indices) + len(test_indices),
+        "n_train_observations": len(train_indices), "n_test_observations": len(test_indices),
+        "split_manifest_sha256": metadata.get("sha256"), "recomputed": False,
+    }
+    return masks[0], masks[1], split_metadata
 
 
 def _process_block(
