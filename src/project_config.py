@@ -101,57 +101,39 @@ def _normalize_data_value_type(data_value_type: str) -> str:
     allowed = {"real", "anomaly", "trend"}
 
     if data_value_type not in allowed:
-        raise ValueError(
-            "data.data_value_type debe ser "
-            "'real', 'anomaly' o 'trend'."
-        )
+        raise ValueError("data.data_value_type debe ser 'real', 'anomaly' o 'trend'.")
 
     return data_value_type
 
-
 def build_processed_run_name(
     mask_names: list[str],
+    start_year: int,
+    end_year_inclusive: int,
     temporal_resolution: str,
     data_value_type: str = "real",
-    categorical_filters: dict[str, list[int]] | None = None,
 ) -> str:
-    """Construye el nombre identificador del dataset procesado."""
+    mask_tokens = _normalize_mask_names(mask_names)
 
-    tokens = _normalize_mask_names(mask_names)
+    if not mask_tokens:
+        mask_tokens = ["nomask"]
 
-    if not tokens:
-        tokens = ["nomask"]
+    if end_year_inclusive < start_year:
+        raise ValueError("end_year_inclusive debe ser mayor o igual que start_year.")
 
-    for name, selected_classes in sorted(
-        (categorical_filters or {}).items()
-    ):
-        if not selected_classes:
-            continue
-
-        classes_tag = "-".join(
-            str(class_id)
-            for class_id in sorted(selected_classes)
-        )
-        tokens.append(f"{name}-{classes_tag}")
-
-    temporal_resolution = str(
-        temporal_resolution
-    ).lower().strip()
-
+    temporal_resolution = temporal_resolution.lower().strip()
     if temporal_resolution not in {"monthly", "annual"}:
         raise ValueError(
-            "data.temporal_resolution debe ser "
-            "'monthly' o 'annual'."
+            "temporal_resolution debe ser 'monthly' o 'annual'."
         )
 
-    tokens.append(temporal_resolution)
+    data_value_type = _normalize_data_value_type(data_value_type)
 
-    data_value_type = _normalize_data_value_type(
-        data_value_type
-    )
-
-    if data_value_type != "real":
-        tokens.append(data_value_type)
+    tokens = [
+        *mask_tokens,
+        temporal_resolution,
+        data_value_type,
+        f"{start_year}_{end_year_inclusive}",
+    ]
 
     return "_".join(tokens)
 
@@ -385,86 +367,67 @@ def resolve_data_config(
     )
 
     start_year = int(data_section.get("start_year", 1982))
-
-    end_year_inclusive = int(
-        data_section.get(
-            "end_year_inclusive",
-            2022,
-        )
-    )
-
+    end_year_inclusive = int(data_section.get("end_year_inclusive", 2022))
     if start_year > end_year_inclusive:
-        raise ValueError(
-            "data.start_year debe ser menor o igual que "
-            "data.end_year_inclusive."
-        )
+        raise ValueError("data.start_year debe ser menor o igual que data.end_year_inclusive.")
 
     roi = data_section.get("roi")
 
     run_name = build_processed_run_name(
         mask_names=mask_names,
+        start_year=start_year,
+        end_year_inclusive=end_year_inclusive,
         temporal_resolution=temporal_resolution,
         data_value_type=data_value_type,
-        categorical_filters=categorical_filters,
     )
+
+    binary_mask_metadata = ((paths_raw.get("masks", {}) or {}).get("binary", {}) or {})
 
     cfg = {
-        # Archivos de configuración
-        "config_path": str(config_path),
-        "paths_config_path": str(paths_config_path),
+    # Archivos de configuración
+    "config_path": str(config_path),
+    "paths_config_path": str(paths_config_path),
 
-        # Rutas generales
-        "project_dir": project_dir,
-        "data_dir": data_dir,
-        "processed_base_dir": processed_base_dir,
-        "mask_dir": mask_dir,
+    # Rutas
+    "project_dir": project_dir,
+    "main_dir": project_dir,
+    "data_dir": data_dir,
+    "raw_dir": data_dir,
+    "processed_base_dir": processed_base_dir,
+    "mask_dir": mask_dir,
 
-        # Alias temporales para mantener compatibilidad
-        # con los módulos originales.
-        "main_dir": project_dir,
-        "raw_dir": data_dir,
+    # Catálogo de variables
+    "available_variables": sorted(available_variables),
+    "variable_file_map": variable_file_map,
+    "variable_groups": variable_groups,
 
-        # Experimento
-        "variable_names": variable_names,
-        "target_name": target_name,
-        "predictor_names": predictor_names,
-        "temporal_resolution": temporal_resolution,
-        "data_value_type": data_value_type,
-        "mask_names": mask_names,
-        "categorical_filters": categorical_filters,
-        "start_year": start_year,
-        "end_year_inclusive": end_year_inclusive,
-        "dtype": str(
-            data_section.get("dtype", "float32")
-        ),
-        "roi": roi,
+    # Catálogo de máscaras
+    "binary_mask_file_map": binary_mask_file_map,
+    "binary_mask_metadata": binary_mask_metadata,
+    "categorical_mask_file_map": categorical_mask_file_map,
+    "categorical_mask_metadata": categorical_metadata,
 
-        # Catálogos procedentes de paths.toml
-        "variable_groups": variable_groups,
-        "variable_file_map": variable_file_map,
-        "binary_mask_file_map": binary_mask_file_map,
-        "categorical_mask_file_map": (
-            categorical_mask_file_map
-        ),
-        "binary_mask_metadata": (
-            (paths_raw.get("masks", {}) or {})
-            .get("binary", {})
-            or {}
-        ),
-        "categorical_mask_metadata": (
-            categorical_metadata
-        ),
+    # Selección activa
+    "variable_names": variable_names,
+    "target_name": target_name,
+    "predictor_names": predictor_names,
+    "temporal_resolution": temporal_resolution,
+    "data_value_type": data_value_type,
+    "mask_names": mask_names,
+    "categorical_filters": categorical_filters,
+    "start_year": start_year,
+    "end_year_inclusive": end_year_inclusive,
+    "dtype": str(data_section.get("dtype", "float32")),
+    "roi": roi,
 
-        # Configuración externa
-        "mlflow": _resolve_mlflow_config(paths_raw),
+    # Configuración global
+    "mlflow": _resolve_mlflow_config(paths_raw),
 
-        # Salida
-        "run_name": run_name,
-    }
+    # Salida
+    "run_name": run_name,
+}
 
-    cfg["output_dir"] = (
-        processed_base_dir / run_name
-    )
+    cfg["output_dir"] = processed_base_dir / run_name
 
     return cfg
 

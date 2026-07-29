@@ -343,6 +343,61 @@ def _has_single_value_per_year(da: xr.DataArray) -> bool:
     return len(counts) > 0 and bool((counts == 1).all())
 
 
+def _infer_temporal_resolution(da: xr.DataArray) -> str:
+    """Detecta si la serie contiene un valor mensual o anual por año."""
+    if "time" not in da.dims or da.sizes.get("time", 0) == 0:
+        raise ValueError("La variable no contiene pasos temporales.")
+
+    counts = da["time"].dt.year.to_series().value_counts().sort_index()
+
+    if bool((counts == 12).all()):
+        return "monthly"
+    if bool((counts == 1).all()):
+        return "annual"
+
+    raise ValueError(
+        "No se puede determinar una resolución temporal regular. "
+        f"Pasos por año: {counts.to_dict()}"
+    )
+
+
+def _resolve_annual_rule_variable(variable_name: str) -> str:
+    """Obtiene el nombre base usado por ANNUAL_AGGREGATION_RULES."""
+    base_name = _parse_variable_request(variable_name)["base_name"]
+
+    if base_name in ANNUAL_AGGREGATION_RULES:
+        return base_name
+
+    candidates = sorted(ANNUAL_AGGREGATION_RULES, key=len, reverse=True)
+    for candidate in candidates:
+        if base_name.startswith(f"{candidate}_"):
+            return candidate
+
+    raise ValueError(
+        "No existe una regla de agregación anual para "
+        f"{variable_name!r}."
+    )
+
+
+def _expand_annual_to_monthly(da: xr.DataArray) -> xr.DataArray:
+    """Repite cada valor anual en los doce meses del mismo año."""
+    parts: list[xr.DataArray] = []
+
+    for index in range(da.sizes["time"]):
+        annual_value = da.isel(time=index, drop=True)
+        year = int(da["time"].dt.year.isel(time=index).item())
+        monthly_time = pd.date_range(f"{year}-01-01", periods=12, freq="MS")
+        parts.append(annual_value.expand_dims(time=monthly_time))
+
+    out = xr.concat(parts, dim="time").transpose(*da.dims)
+    out.attrs = dict(da.attrs)
+    out.attrs["native_temporal_resolution"] = "annual"
+    out.attrs["temporal_resolution"] = "monthly"
+    out.attrs["temporal_conversion"] = "annual_to_monthly_repeat"
+    out.attrs["annual_aggregation_rule"] = None
+    return out
+
+
 def aggregate_time(
     da: xr.DataArray,
     variable_name: str,
@@ -350,44 +405,50 @@ def aggregate_time(
     annual_rule: str | None = None,
     require_full_years: bool = True,
 ) -> xr.DataArray:
-    temporal_resolution = temporal_resolution.lower()
-    variable_name = variable_name.upper()
-
-    if temporal_resolution == "monthly":
-        out = da.copy()
-        out.attrs = dict(da.attrs)
-        out.attrs["temporal_resolution"] = "monthly"
-        return out
-
-    if temporal_resolution != "annual":
+    """Armoniza la resolución temporal manteniendo la API existente."""
+    requested_resolution = str(temporal_resolution).lower().strip()
+    if requested_resolution not in {"monthly", "annual"}:
         raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
 
-    if _has_single_value_per_year(da):
+    native_resolution = _infer_temporal_resolution(da)
+
+    if native_resolution == requested_resolution:
         out = da.copy()
         out.attrs = dict(da.attrs)
-        out.attrs["temporal_resolution"] = "annual"
-        out.attrs["annual_aggregation_rule"] = "identity"
+        out.attrs["native_temporal_resolution"] = native_resolution
+        out.attrs["temporal_resolution"] = requested_resolution
+        out.attrs["temporal_conversion"] = "identity"
+        out.attrs["annual_aggregation_rule"] = (
+            "identity" if requested_resolution == "annual" else None
+        )
         return out
+
+    if native_resolution == "annual" and requested_resolution == "monthly":
+        return _expand_annual_to_monthly(da)
 
     if require_full_years:
         _validate_full_years(da)
 
-    for clave in ANNUAL_AGGREGATION_RULES:
-        if clave in variable_name:
-            variable_name = clave 
-
-    rule = annual_rule or ANNUAL_AGGREGATION_RULES[variable_name]
+    rule_variable = _resolve_annual_rule_variable(variable_name)
+    rule = annual_rule or ANNUAL_AGGREGATION_RULES[rule_variable]
     if rule not in {"mean", "sum"}:
         raise ValueError("annual_rule debe ser 'mean' o 'sum'.")
 
     grouped = da.groupby("time.year")
-    out = grouped.mean(dim="time", skipna=True) if rule == "mean" else grouped.sum(dim="time", skipna=True)
+    if rule == "mean":
+        out = grouped.mean(dim="time", skipna=True)
+    else:
+        out = grouped.sum(dim="time", skipna=True)
 
     years = out["year"].values
     out = out.rename({"year": "time"})
-    out = out.assign_coords(time=pd.to_datetime([f"{int(y)}-01-01" for y in years]))
+    out = out.assign_coords(
+        time=pd.to_datetime([f"{int(year)}-01-01" for year in years])
+    )
     out.attrs = dict(da.attrs)
+    out.attrs["native_temporal_resolution"] = "monthly"
     out.attrs["temporal_resolution"] = "annual"
+    out.attrs["temporal_conversion"] = f"monthly_to_annual_{rule}"
     out.attrs["annual_aggregation_rule"] = rule
     return out
 
@@ -710,16 +771,16 @@ def _process_and_save_single_dataarray(
     lag_steps = variable_info["lag_steps"]
     temporal_resolution = temporal_resolution.lower().strip()
 
-    if temporal_resolution == "monthly":
+    native_temporal_resolution = _infer_temporal_resolution(da_raw)
+
+    if temporal_resolution == "annual" and native_temporal_resolution == "monthly":
         da_for_aggregation = _apply_lagged_shift(
-            da_raw, lag_steps, temporal_resolution
+            da_raw, lag_steps, "monthly"
         )
         lag_apply_stage = "pre_aggregation" if lag_steps > 0 else None
-    elif temporal_resolution == "annual":
+    else:
         da_for_aggregation = da_raw
         lag_apply_stage = "post_aggregation" if lag_steps > 0 else None
-    else:
-        raise ValueError("temporal_resolution debe ser 'monthly' o 'annual'.")
 
     da_agg = aggregate_time(
         da=da_for_aggregation,
@@ -728,8 +789,11 @@ def _process_and_save_single_dataarray(
         annual_rule=annual_rule,
         require_full_years=require_full_years,
     )
-    if temporal_resolution == "annual" and lag_steps > 0:
-        da_agg = _apply_lagged_shift(da_agg, lag_steps, temporal_resolution)
+
+    if lag_steps > 0 and lag_apply_stage == "post_aggregation":
+        da_agg = _apply_lagged_shift(
+            da_agg, lag_steps, temporal_resolution
+        )
 
     combined_mask, mask_info = build_combined_filter_mask(
         da=da_agg,
@@ -768,7 +832,20 @@ def _process_and_save_single_dataarray(
             "load_metadata": load_meta_out,
             "processing": {
                 "temporal_resolution": temporal_resolution,
-                "annual_rule": annual_rule,
+                "native_temporal_resolution": da_agg.attrs.get(
+                    "native_temporal_resolution",
+                    native_temporal_resolution,
+                ),
+                "requested_temporal_resolution": temporal_resolution,
+                "temporal_conversion": da_agg.attrs.get(
+                    "temporal_conversion",
+                    "identity",
+                ),
+                "annual_rule": da_agg.attrs.get(
+                    "annual_aggregation_rule"
+                ),
+                "native_time_size": int(da_raw.sizes["time"]),
+                "final_time_size": int(da_final.sizes["time"]),
                 "require_full_years": require_full_years,
                 **preprocess_result.metadata,
                 "preprocess_products": preprocess_products,

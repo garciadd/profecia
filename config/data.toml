@@ -1,28 +1,32 @@
 [data]
 temporal_resolution = "annual"
-data_value_type = "real"
+data_value_type = "trend"
 mask_names = [
     "land",
 ]
-start_year = 1982
-end_year_inclusive = 2022
+start_year = 1988
+end_year_inclusive = 2010
 dtype = "float32"
 variable_names = [
     "LAI",
+    "SM1",
+    "SM1_2",
     "TP",
-    "T2M",
-    "SSRD",
-    "PEV",
+    "D2M",
+    "WIND",
     "CO2",
-    "SAND",
+    "NDEP",
+    "PH",
+    "RICHNESS",
+    "BULK",
 ]
 target_name = "LAI"
 
 [data.roi]
-lat_min = -30.0
-lat_max = 30.0
-lon_min = -160.0
-lon_max = 160.0
+lat_min = -60.0
+lat_max = 60.0
+lon_min = -180.0
+lon_max = 180.0
 
 [data.categorical_filters]
 climate = []

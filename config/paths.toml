@@ -49,7 +49,6 @@ TOTAL_N = "soil/total_n_1982_2022_monthly_0.5deg.nc"
 land = "land_mask_0p5deg.npy"
 ebf = "ebf_mask_0p5deg.npy"
 bs = "bs_mask_0p5deg.npy"
-#deserts = "deserts_mask_0p5deg.npy"
 snow_ice = "snow_ice_mask_0p5deg.npy"
 
 [files.masks.categorical]
@@ -80,13 +79,6 @@ description = "Excluye regiones de suelo desnudo o vegetación escasa."
 mode = "exclude"
 default = false
 enabled = true
-
-#[masks.binary.deserts]
-#label = "Desiertos"
-#description = "Excluye regiones desérticas."
-#mode = "exclude"
-#default = false
-#enabled = true
 
 [masks.binary.snow_ice]
 label = "Nieve y hielo"
